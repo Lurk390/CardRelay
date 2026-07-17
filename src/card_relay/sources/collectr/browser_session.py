@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
@@ -17,14 +18,22 @@ class BrowserSessionManager:
         self.profile_directory = profile_directory
         self.navigation_timeout_ms = navigation_timeout_seconds * 1000
 
-    def run_visible(self, url: str, wait_for_user: Callable[[], None]) -> None:
-        self._run(url, wait_for_user, None)
+    def run_visible(
+        self,
+        url: str,
+        wait_for_user: Callable[[], None],
+        cdp_url: str | None = None,
+    ) -> None:
+        self._run(url, wait_for_user, None, cdp_url)
 
     def inspect_visible(
-        self, url: str, wait_for_user: Callable[[], None]
+        self,
+        url: str,
+        wait_for_user: Callable[[], None],
+        cdp_url: str | None = None,
     ) -> "BrowserInspectionDiagnostics":
         diagnostics = BrowserInspectionDiagnostics()
-        self._run(url, wait_for_user, diagnostics)
+        self._run(url, wait_for_user, diagnostics, cdp_url)
         return diagnostics
 
     def _run(
@@ -32,6 +41,7 @@ class BrowserSessionManager:
         url: str,
         wait_for_user: Callable[[], None],
         diagnostics: "BrowserInspectionDiagnostics | None",
+        cdp_url: str | None,
     ) -> None:
         try:
             from playwright.sync_api import Error as PlaywrightError
@@ -41,21 +51,34 @@ class BrowserSessionManager:
                 "Playwright is not installed; run `uv sync --all-extras --dev`"
             ) from error
 
-        self.profile_directory.mkdir(parents=True, exist_ok=True)
         try:
             with sync_playwright() as playwright:
-                context = playwright.chromium.launch_persistent_context(
-                    str(self.profile_directory), headless=False
-                )
-                try:
+                if cdp_url is not None:
+                    validate_cdp_endpoint(cdp_url)
+                    browser = playwright.chromium.connect_over_cdp(cdp_url)
+                    if not browser.contexts:
+                        raise IntegrationUnavailableError(
+                            "the remote Chrome instance has no accessible browser context"
+                        )
+                    context = browser.contexts[0]
+                    page = context.new_page()
+                    close_context = False
+                else:
+                    self.profile_directory.mkdir(parents=True, exist_ok=True)
+                    context = playwright.chromium.launch_persistent_context(
+                        str(self.profile_directory), headless=False
+                    )
                     page = context.pages[0] if context.pages else context.new_page()
+                    close_context = True
+                try:
                     if diagnostics is not None:
                         page.on("response", diagnostics.observe_response)
                     page.set_default_navigation_timeout(self.navigation_timeout_ms)
                     page.goto(url, wait_until="domcontentloaded")
                     wait_for_user()
                 finally:
-                    context.close()
+                    if close_context:
+                        context.close()
         except PlaywrightError as error:
             raise IntegrationUnavailableError(_classify_browser_launch_error(str(error))) from error
 
@@ -98,3 +121,15 @@ def _classify_browser_launch_error(message: str) -> str:
     if "executable doesn't exist" in normalized:
         return "Chromium is not installed; run `uv run playwright install chromium`"
     return "unable to launch the visible Chromium session; see verbose logs for diagnostics"
+
+
+def validate_cdp_endpoint(endpoint: str) -> None:
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    }:
+        raise IntegrationUnavailableError(
+            "CDP endpoint must use HTTP(S) on loopback; expose it only through an SSH tunnel"
+        )
