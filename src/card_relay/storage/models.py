@@ -39,6 +39,15 @@ class SyncPlanRow(Base):
     payload: Mapped[str] = mapped_column(Text)
 
 
+class SyncRunRow(Base):
+    __tablename__ = "sync_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_id: Mapped[int] = mapped_column(Integer)
+    dry_run: Mapped[int] = mapped_column(Integer)
+    succeeded: Mapped[int] = mapped_column(Integer)
+    result_payload: Mapped[str] = mapped_column(Text)
+
+
 class SchemaVersionRow(Base):
     __tablename__ = "application_schema_version"
     version: Mapped[int] = mapped_column(primary_key=True)

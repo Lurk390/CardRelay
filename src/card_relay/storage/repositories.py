@@ -1,8 +1,11 @@
+import json
+
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from card_relay.domain.models import SourceSnapshot
-from card_relay.storage.models import MappingRow, SnapshotRow
+from card_relay.domain.operations import SyncPlan, SyncResult
+from card_relay.storage.models import MappingRow, SnapshotRow, SyncPlanRow, SyncRunRow
 
 
 class MappingRepository:
@@ -75,3 +78,37 @@ class SnapshotRepository:
             if row is None:
                 return None
             return SourceSnapshot.model_validate(row.metadata_json)
+
+
+class SyncAuditRepository:
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+
+    def add_plan(self, plan: SyncPlan) -> int:
+        with Session(self.engine) as session:
+            row = SyncPlanRow(
+                destination_name=plan.destination,
+                payload=plan.model_dump_json(),
+            )
+            session.add(row)
+            session.commit()
+            return row.id
+
+    def add_run(self, plan_id: int, result: SyncResult) -> int:
+        with Session(self.engine) as session:
+            row = SyncRunRow(
+                plan_id=plan_id,
+                dry_run=int(result.dry_run),
+                succeeded=int(result.succeeded),
+                result_payload=result.model_dump_json(),
+            )
+            session.add(row)
+            session.commit()
+            return row.id
+
+    def get_plan(self, plan_id: int) -> SyncPlan:
+        with Session(self.engine) as session:
+            row = session.get(SyncPlanRow, plan_id)
+            if row is None:
+                raise KeyError(f"sync plan {plan_id} does not exist")
+            return SyncPlan.model_validate(json.loads(row.payload))

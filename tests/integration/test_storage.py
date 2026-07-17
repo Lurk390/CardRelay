@@ -1,7 +1,12 @@
 from card_relay.domain.enums import ExtractionCompleteness, IngestionMethod
 from card_relay.domain.models import SourceSnapshot
+from card_relay.domain.operations import SyncPlan, SyncResult
 from card_relay.storage.database import create_database
-from card_relay.storage.repositories import MappingRepository, SnapshotRepository
+from card_relay.storage.repositories import (
+    MappingRepository,
+    SnapshotRepository,
+    SyncAuditRepository,
+)
 
 
 def test_mapping_persistence(tmp_path) -> None:
@@ -36,3 +41,18 @@ def test_latest_trusted_snapshot_ignores_untrusted(tmp_path) -> None:
         )
     )
     assert repository.latest_trusted() == trusted
+
+
+def test_sync_plan_and_run_audit_round_trip(tmp_path) -> None:
+    engine = create_database(tmp_path / "audit.db")
+    repository = SyncAuditRepository(engine)
+    plan = SyncPlan(
+        source_completeness=ExtractionCompleteness.COMPLETE,
+        destination="mock",
+        operations=[],
+    )
+    plan_id = repository.add_plan(plan)
+    run_id = repository.add_run(plan_id, SyncResult(results=[], dry_run=True))
+    assert plan_id > 0
+    assert run_id > 0
+    assert repository.get_plan(plan_id) == plan

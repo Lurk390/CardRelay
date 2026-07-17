@@ -85,3 +85,12 @@ def test_removal_requires_separate_flag_and_threshold() -> None:
     removal = build_plan(source, destination, matches, capabilities, policy).operations[1]
     assert removal.operation_type is OperationType.REMOVE
     assert removal.executable
+
+
+def test_equivalent_plans_are_fully_deterministic() -> None:
+    source, destination, matches = setup(3, 1)
+    capabilities = DestinationCapabilities(quantity_increases=True)
+    first = build_plan(source, destination, matches, capabilities, SyncPolicy())
+    second = build_plan(source, destination, matches, capabilities, SyncPolicy())
+    assert first == second
+    assert first.operations[0].operation_id.startswith("op-v1:")
