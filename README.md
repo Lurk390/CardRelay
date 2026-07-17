@@ -18,6 +18,11 @@ uv run card-relay doctor
 uv run card-relay collectr validate --csv tests/fixtures/collectr/plausible_export.csv
 uv run card-relay collectr import --csv tests/fixtures/collectr/plausible_export.csv
 uv run card-relay collectr snapshot --csv tests/fixtures/collectr/plausible_export.csv
+uv run card-relay match --csv tests/fixtures/collectr/plausible_export.csv --destination mock
+uv run card-relay plan --csv tests/fixtures/collectr/plausible_export.csv --destination mock
+uv run card-relay sync --csv tests/fixtures/collectr/plausible_export.csv --destination mock
+# Explicit local mock write, still limited to safe operations:
+uv run card-relay sync --csv tests/fixtures/collectr/plausible_export.csv --destination mock --apply
 ```
 
 Browser commands (`collectr login`, `inspect`, and related session commands) fail closed until Milestone 2. Dex transport is likewise disabled pending documented research.
@@ -29,4 +34,3 @@ Browser commands (`collectr login`, `inspect`, and related session commands) fai
 Local snapshots may contain private collection metadata. Authentication state is never placed in snapshots and browser profiles remain local and ignored. Users are responsible for complying with each platform's terms; CardRelay does not bypass access controls, anti-bot systems, or rate limits.
 
 Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src`. Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Roadmap: browser fixture ingestion, persistent matching review, researched Dex read-only support, safe writes, controlled destructive sync, more adapters, then a browser extension.
-
