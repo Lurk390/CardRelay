@@ -26,6 +26,7 @@ class BrowserConfig(BaseModel):
     navigation_timeout_seconds: int = Field(default=30, gt=0)
     request_delay_seconds: float = Field(default=1, ge=0)
     require_complete_extraction: bool = True
+    research_url: str = "https://www.getcollectr.com/"
 
 
 class CollectrConfig(BaseModel):

@@ -98,3 +98,18 @@ def test_mapping_commands_persist_confirmed_and_rejected_state(tmp_path: Path) -
     assert reject.exit_code == 0
     listed = runner.invoke(app, ["mappings", "list", "--json"])
     assert json.loads(listed.stdout)["mappings"][0]["status"] == "rejected"
+
+
+def test_browser_session_status_never_claims_authentication(tmp_path: Path) -> None:
+    runner = CliRunner(env={"CARD_RELAY_DATA_DIRECTORY": str(tmp_path)})
+    result = runner.invoke(app, ["collectr", "session-status", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {
+        "profile_present": False,
+        "authentication_status": "unknown",
+        "reason": "No verified Collectr web authentication contract exists yet.",
+    }
+
+    dex = runner.invoke(app, ["dex", "session-status", "--json"])
+    assert dex.exit_code == 0
+    assert json.loads(dex.stdout)["authentication_status"] == "unknown"

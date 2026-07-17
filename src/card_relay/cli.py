@@ -5,6 +5,11 @@ from typing import Annotated
 import typer
 
 from card_relay import __version__
+from card_relay.browser.profile import (
+    browser_profile_directory,
+    browser_profile_present,
+    clear_browser_profile,
+)
 from card_relay.config import load_settings
 from card_relay.destinations.mock import FileBackedMockDestinationAdapter
 from card_relay.domain.enums import MatchStatus, OperationType
@@ -13,6 +18,7 @@ from card_relay.domain.operations import SyncPlan
 from card_relay.exceptions import CardRelayError
 from card_relay.matching import match_collection
 from card_relay.paths import config_path, data_directory
+from card_relay.sources.collectr.browser_session import BrowserSessionManager
 from card_relay.sources.collectr.csv_source import CollectrCsvSource
 from card_relay.storage.database import create_database
 from card_relay.storage.repositories import (
@@ -29,9 +35,11 @@ app = typer.Typer(help="Sync your trading card collection from one source of tru
 collectr_app = typer.Typer(help="Collectr ingestion and browser-session commands.")
 config_app = typer.Typer(help="Configuration commands.")
 mappings_app = typer.Typer(help="Persistent mapping review commands.")
+dex_app = typer.Typer(help="Dex read-only browser research commands.")
 app.add_typer(collectr_app, name="collectr")
 app.add_typer(config_app, name="config")
 app.add_typer(mappings_app, name="mappings")
+app.add_typer(dex_app, name="dex")
 
 
 def _emit(payload: dict[str, object], as_json: bool) -> None:
@@ -123,15 +131,166 @@ def snapshot(
     _emit(item.model_dump(mode="json"), as_json)
 
 
-def _scaffold(name: str) -> None:
+def _run_collectr_browser(url: str, action: str) -> None:
+    settings = load_settings().collectr.browser
+    profile = settings.profile_directory or browser_profile_directory()
+    typer.echo(f"Opening a visible browser at {url}")
+    typer.echo(f"Local browser profile: {profile}")
     typer.echo(
-        f"Collectr browser {name} is scaffolded for Milestone 2; no live action was performed."
+        "Authentication remains between you and the site; CardRelay never asks for a password."
     )
-    raise typer.Exit(7)
+    manager = BrowserSessionManager(profile, settings.navigation_timeout_seconds)
+    manager.run_visible(
+        url,
+        lambda: typer.prompt(
+            f"Complete the user-controlled {action} flow in the browser, then press Enter",
+            default="",
+            show_default=False,
+        ),
+    )
 
 
-for command_name in ("login", "logout", "session-status", "clear-session", "inspect"):
-    collectr_app.command(command_name)(lambda name=command_name: _scaffold(name))
+@collectr_app.command("login")
+def collectr_login(
+    url: Annotated[str | None, typer.Option("--url")] = None,
+) -> None:
+    selected = url or load_settings().collectr.browser.research_url
+    _run_collectr_browser(selected, "login or account discovery")
+    typer.echo("Browser profile saved locally; authentication status remains unverified.")
+
+
+@collectr_app.command("logout")
+def collectr_logout(
+    url: Annotated[str | None, typer.Option("--url")] = None,
+) -> None:
+    selected = url or load_settings().collectr.browser.research_url
+    _run_collectr_browser(selected, "manual logout")
+    typer.echo("Manual logout flow finished; use clear-session to remove all local browser state.")
+
+
+@collectr_app.command("session-status")
+def collectr_session_status(
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    _emit(
+        {
+            "profile_present": browser_profile_present(),
+            "authentication_status": "unknown",
+            "reason": "No verified Collectr web authentication contract exists yet.",
+        },
+        as_json,
+    )
+
+
+@collectr_app.command("clear-session")
+def collectr_clear_session(
+    yes: Annotated[bool, typer.Option("--yes")] = False,
+) -> None:
+    if browser_profile_present() and not yes:
+        typer.confirm("Delete the local Collectr browser profile?", abort=True)
+    clear_browser_profile()
+    typer.echo("Local Collectr browser profile removed.")
+
+
+@collectr_app.command("inspect")
+def collectr_inspect(
+    url: Annotated[str | None, typer.Option("--url")] = None,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    selected = url or load_settings().collectr.browser.research_url
+    settings = load_settings().collectr.browser
+    profile = settings.profile_directory or browser_profile_directory()
+    manager = BrowserSessionManager(profile, settings.navigation_timeout_seconds)
+    diagnostics = manager.inspect_visible(
+        selected,
+        lambda: typer.prompt(
+            "Browse the portfolio read-only, then press Enter",
+            default="",
+            show_default=False,
+        ),
+    )
+    _emit(
+        {
+            **diagnostics.model_dump(),
+            "collection_extracted": False,
+            "completeness": "unknown",
+        },
+        as_json,
+    )
+
+
+DEX_WEB_URL = "https://app.dextcg.com/"
+
+
+def _run_dex_browser(action: str) -> None:
+    settings = load_settings().collectr.browser
+    manager = BrowserSessionManager(
+        browser_profile_directory("dex"), settings.navigation_timeout_seconds
+    )
+    manager.run_visible(
+        DEX_WEB_URL,
+        lambda: typer.prompt(
+            f"Complete the user-controlled Dex {action}, then press Enter",
+            default="",
+            show_default=False,
+        ),
+    )
+
+
+@dex_app.command("login")
+def dex_login() -> None:
+    _run_dex_browser("login")
+    typer.echo("Dex browser profile saved locally; authentication remains unverified.")
+
+
+@dex_app.command("session-status")
+def dex_session_status(
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    _emit(
+        {
+            "profile_present": browser_profile_present("dex"),
+            "authentication_status": "unknown",
+            "reason": "Dex authentication markers have not yet been fixture-verified.",
+        },
+        as_json,
+    )
+
+
+@dex_app.command("clear-session")
+def dex_clear_session(
+    yes: Annotated[bool, typer.Option("--yes")] = False,
+) -> None:
+    if browser_profile_present("dex") and not yes:
+        typer.confirm("Delete the local Dex browser profile?", abort=True)
+    clear_browser_profile("dex")
+    typer.echo("Local Dex browser profile removed.")
+
+
+@dex_app.command("inspect")
+def dex_inspect(
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    settings = load_settings().collectr.browser
+    manager = BrowserSessionManager(
+        browser_profile_directory("dex"), settings.navigation_timeout_seconds
+    )
+    diagnostics = manager.inspect_visible(
+        DEX_WEB_URL,
+        lambda: typer.prompt(
+            "Browse your Dex collection read-only, then press Enter",
+            default="",
+            show_default=False,
+        ),
+    )
+    _emit(
+        {
+            **diagnostics.model_dump(),
+            "collection_extracted": False,
+            "writes_enabled": False,
+        },
+        as_json,
+    )
 
 
 def _mock_workflow(
