@@ -15,7 +15,11 @@ from card_relay.matching import match_collection
 from card_relay.paths import config_path, data_directory
 from card_relay.sources.collectr.csv_source import CollectrCsvSource
 from card_relay.storage.database import create_database
-from card_relay.storage.repositories import SnapshotRepository, SyncAuditRepository
+from card_relay.storage.repositories import (
+    MappingRepository,
+    SnapshotRepository,
+    SyncAuditRepository,
+)
 from card_relay.sync.executor import execute_plan
 from card_relay.sync.planner import build_plan
 from card_relay.sync.policy import SyncPolicy
@@ -154,7 +158,13 @@ def _create_plan(
     if source != "collectr-csv":
         raise typer.BadParameter("Milestone 1 supports --source collectr-csv")
     collection, adapter = _mock_workflow(csv_path, destination)
-    matches = match_collection(collection, adapter.fetch_catalog())
+    mappings = MappingRepository(create_database(data_directory() / "card-relay.db"))
+    matches = match_collection(
+        collection,
+        adapter.fetch_catalog(),
+        mappings.list_confirmed(destination),
+        mappings.list_rejected(destination),
+    )
     effective_policy = policy or SyncPolicy()
     current_snapshot = _csv_source(csv_path).create_snapshot()
     repository = SnapshotRepository(create_database(data_directory() / "card-relay.db"))
@@ -205,7 +215,13 @@ def match(
     if source != "collectr-csv":
         raise typer.BadParameter("Milestone 1 supports --source collectr-csv")
     collection, adapter = _mock_workflow(csv_path, destination)
-    results = match_collection(collection, adapter.fetch_catalog())
+    mappings = MappingRepository(create_database(data_directory() / "card-relay.db"))
+    results = match_collection(
+        collection,
+        adapter.fetch_catalog(),
+        mappings.list_confirmed(destination),
+        mappings.list_rejected(destination),
+    )
     counts = {status.value: 0 for status in MatchStatus}
     for result in results:
         counts[result.status.value] += 1
@@ -289,10 +305,50 @@ def sync(
         raise typer.Exit(8)
 
 
-for command_name in ("list", "review", "confirm", "reject"):
-    mappings_app.command(command_name)(
-        lambda name=command_name: typer.echo(f"mapping {name}: no pending mappings")
+@mappings_app.command("list")
+def mappings_list(
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    repository = MappingRepository(create_database(data_directory() / "card-relay.db"))
+    records = repository.list_all()
+    _emit({"count": len(records), "mappings": records}, as_json)
+
+
+@mappings_app.command("review")
+def mappings_review(
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    _emit(
+        {
+            "pending": [],
+            "message": (
+                "Probable and ambiguous review queue persistence is planned for Milestone 3."
+            ),
+        },
+        as_json,
     )
+
+
+@mappings_app.command("confirm")
+def mappings_confirm(
+    fingerprint: Annotated[str, typer.Argument()],
+    destination_id: Annotated[str, typer.Argument()],
+    destination: Annotated[str, typer.Option("--destination")] = "mock",
+) -> None:
+    repository = MappingRepository(create_database(data_directory() / "card-relay.db"))
+    repository.confirm(fingerprint, destination, destination_id)
+    typer.echo("mapping confirmed")
+
+
+@mappings_app.command("reject")
+def mappings_reject(
+    fingerprint: Annotated[str, typer.Argument()],
+    destination_id: Annotated[str, typer.Argument()],
+    destination: Annotated[str, typer.Option("--destination")] = "mock",
+) -> None:
+    repository = MappingRepository(create_database(data_directory() / "card-relay.db"))
+    repository.reject(fingerprint, destination, destination_id)
+    typer.echo("mapping rejected")
 
 
 def main() -> None:
