@@ -57,9 +57,7 @@ class BrowserSessionManager:
                 finally:
                     context.close()
         except PlaywrightError as error:
-            raise IntegrationUnavailableError(
-                "unable to launch Chromium; run `uv run playwright install chromium`"
-            ) from error
+            raise IntegrationUnavailableError(_classify_browser_launch_error(str(error))) from error
 
 
 class BrowserInspectionDiagnostics(BaseModel):
@@ -82,3 +80,21 @@ class BrowserInspectionDiagnostics(BaseModel):
         self.redirect_response_count += int(300 <= status < 400)
         self.client_error_count += int(400 <= status < 500)
         self.server_error_count += int(status >= 500)
+
+
+def _classify_browser_launch_error(message: str) -> str:
+    normalized = message.casefold()
+    if "missing x server" in normalized or "$display" in normalized:
+        return (
+            "unable to launch the required visible browser: no desktop display is available. "
+            "Run CardRelay on the desktop host or configure explicit X11/Wayland forwarding "
+            "for the container; headless authentication is intentionally disabled"
+        )
+    if "error while loading shared libraries" in normalized:
+        return (
+            "Chromium system libraries are missing; run "
+            "`uv run playwright install --with-deps chromium`"
+        )
+    if "executable doesn't exist" in normalized:
+        return "Chromium is not installed; run `uv run playwright install chromium`"
+    return "unable to launch the visible Chromium session; see verbose logs for diagnostics"
