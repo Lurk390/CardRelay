@@ -53,3 +53,36 @@ def test_yes_does_not_enable_quantity_decreases(tmp_path: Path) -> None:
     assert payload["executable_operations"] == 0
     unchanged = json.loads(state_path.read_text(encoding="utf-8"))
     assert unchanged[0]["quantity"] == state[0]["quantity"]
+
+
+def test_trusted_snapshot_drop_blocks_opted_in_destruction(tmp_path: Path) -> None:
+    runner = CliRunner(env={"CARD_RELAY_DATA_DIRECTORY": str(tmp_path)})
+    original = ["--csv", str(FIXTURE), "--destination", "mock", "--json"]
+    assert runner.invoke(app, ["sync", *original, "--apply", "--yes"]).exit_code == 0
+
+    smaller = tmp_path / "smaller.csv"
+    smaller.write_text(
+        "Card,Set,Number,Quantity,Language,Finish\nEmbermouse,Mythic Sparks,1,1,English,Normal\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "--csv",
+            str(smaller),
+            "--destination",
+            "mock",
+            "--allow-quantity-decreases",
+            "--allow-removals",
+            "--maximum-removal-count",
+            "10",
+            "--maximum-removal-percent",
+            "100",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["executable_operations"] == 0
+    assert any("failure threshold" in warning for warning in payload["warnings"])

@@ -8,7 +8,7 @@ from card_relay import __version__
 from card_relay.config import load_settings
 from card_relay.destinations.mock import FileBackedMockDestinationAdapter
 from card_relay.domain.enums import MatchStatus, OperationType
-from card_relay.domain.models import CanonicalCollection, DestinationCatalogRecord
+from card_relay.domain.models import CanonicalCollection, DestinationCatalogRecord, SourceSnapshot
 from card_relay.domain.operations import SyncPlan
 from card_relay.exceptions import CardRelayError
 from card_relay.matching import match_collection
@@ -19,6 +19,7 @@ from card_relay.storage.repositories import SnapshotRepository
 from card_relay.sync.executor import execute_plan
 from card_relay.sync.planner import build_plan
 from card_relay.sync.policy import SyncPolicy
+from card_relay.sync.safeguards import assess_source_snapshot
 
 app = typer.Typer(help="Sync your trading card collection from one source of truth to every app.")
 collectr_app = typer.Typer(help="Collectr ingestion and browser-session commands.")
@@ -149,21 +150,34 @@ def _mock_workflow(
 
 def _create_plan(
     csv_path: Path, source: str, destination: str, policy: SyncPolicy | None = None
-) -> tuple[SyncPlan, FileBackedMockDestinationAdapter]:
+) -> tuple[SyncPlan, FileBackedMockDestinationAdapter, SourceSnapshot]:
     if source != "collectr-csv":
         raise typer.BadParameter("Milestone 1 supports --source collectr-csv")
     collection, adapter = _mock_workflow(csv_path, destination)
     matches = match_collection(collection, adapter.fetch_catalog())
+    effective_policy = policy or SyncPolicy()
+    current_snapshot = _csv_source(csv_path).create_snapshot()
+    repository = SnapshotRepository(create_database(data_directory() / "card-relay.db"))
+    assessment = assess_source_snapshot(
+        current_snapshot, repository.latest_trusted(), effective_policy
+    )
+    current_snapshot = current_snapshot.model_copy(
+        update={"trusted_for_destructive_planning": assessment.destructive_planning_allowed}
+    )
+    item = build_plan(
+        collection,
+        adapter.fetch_collection(),
+        matches,
+        adapter.get_capabilities(),
+        effective_policy,
+        destination,
+        assessment.destructive_planning_allowed,
+    )
+    item.warnings.extend(assessment.warnings)
     return (
-        build_plan(
-            collection,
-            adapter.fetch_collection(),
-            matches,
-            adapter.get_capabilities(),
-            policy or SyncPolicy(),
-            destination,
-        ),
+        item,
         adapter,
+        current_snapshot,
     )
 
 
@@ -214,7 +228,7 @@ def plan(
         maximum_removal_count=maximum_removal_count,
         maximum_removal_percent=maximum_removal_percent,
     )
-    item, _ = _create_plan(csv_path, source, destination, policy)
+    item, _, _ = _create_plan(csv_path, source, destination, policy)
     _emit(_plan_summary(item), as_json)
 
 
@@ -241,7 +255,7 @@ def sync(
         maximum_removal_count=maximum_removal_count,
         maximum_removal_percent=maximum_removal_percent,
     )
-    item, adapter = _create_plan(csv_path, source, destination, policy)
+    item, adapter, current_snapshot = _create_plan(csv_path, source, destination, policy)
     summary = _plan_summary(item)
     if dry_run:
         _emit({**summary, "applied": False, "dry_run": True}, as_json)
@@ -249,6 +263,10 @@ def sync(
     if item.executable_operations and not yes:
         typer.confirm("Apply the listed safe operations?", abort=True)
     result = execute_plan(item, adapter, dry_run=False)
+    if result.succeeded:
+        SnapshotRepository(create_database(data_directory() / "card-relay.db")).add(
+            current_snapshot
+        )
     _emit(
         {**summary, "applied": True, "dry_run": False, "succeeded": result.succeeded},
         as_json,
