@@ -58,12 +58,18 @@ def _finish(value: str) -> Finish:
         "cosmos holo": Finish.COSMOS_HOLO,
         "stamped": Finish.STAMPED,
         "promo": Finish.PROMO,
+        "first edition": Finish.NORMAL,
+        "unlimited": Finish.NORMAL,
     }
     return known.get(normalized, Finish.UNKNOWN if not normalized else Finish.APPLICATION_SPECIFIC)
 
 
 def _row_value(row: dict[str, str | None], mapped: dict[str, str], key: str) -> str:
     return (row.get(mapped[key], "") or "").strip() if key in mapped else ""
+
+
+def _boolean(value: str) -> bool:
+    return _header_key(value) in {"yes", "true", "1"}
 
 
 def parse_csv(
@@ -75,17 +81,22 @@ def parse_csv(
         raise SourceValidationError(f"unable to read CSV as UTF-8: {error}") from error
     with handle:
         reader = csv.DictReader(handle)
-        if not reader.fieldnames:
+        try:
+            rows = list(reader)
+        except UnicodeError as error:
+            raise SourceValidationError(f"unable to read CSV as UTF-8: {error}") from error
+        headers = reader.fieldnames
+        if not headers:
             raise SourceValidationError("CSV has no header row")
-        mapped = _map_headers(reader.fieldnames, aliases)
+        mapped = _map_headers(headers, aliases)
         schema = hashlib.sha256(
-            "|".join(sorted(_header_key(h) for h in reader.fieldnames)).encode()
+            "|".join(sorted(_header_key(h) for h in headers)).encode()
         ).hexdigest()
         aggregated: dict[str, CanonicalCollectionEntry] = {}
         duplicates = 0
         warnings: list[str] = []
         errors: list[str] = []
-        for row_number, row in enumerate(reader, start=2):
+        for row_number, row in enumerate(rows, start=2):
             if not any((value or "").strip() for value in row.values()):
                 continue
 
@@ -95,7 +106,7 @@ def parse_csv(
                 quantity = int(value("quantity"))
                 if quantity <= 0:
                     raise ValueError("quantity must be greater than zero")
-                edition_value = _header_key(value("edition"))
+                edition_value = _header_key(value("edition") or value("finish"))
                 edition = (
                     Edition.FIRST
                     if "first" in edition_value
@@ -109,18 +120,28 @@ def parse_csv(
                     set_name=value("set_name") or None,
                     set_code=value("set_code") or None,
                     collector_number=value("collector_number"),
+                    printed_set_total=(
+                        int(value("printed_set_total")) if value("printed_set_total") else None
+                    ),
                     language=value("language") or "unknown",
                     finish=_finish(value("finish")),
                     edition=edition,
                     grading_status="graded" if grader else "ungraded",
                     grading_company=grader,
                     grade=Decimal(value("grade")) if value("grade") else None,
-                    promo=_header_key(value("promo")) in {"yes", "true", "1"},
+                    certification_number=value("certification_number") or None,
+                    promo=_boolean(value("promo"))
+                    or _header_key(value("finish")) in {"promo", "promotional"},
+                    signed=_boolean(value("signed")),
+                    altered=_boolean(value("altered")),
                 )
                 entry = CanonicalCollectionEntry(
                     identity=identity,
                     quantity=quantity,
                     condition=value("condition") or None,
+                    rarity=value("rarity") or None,
+                    notes=value("notes") or None,
+                    source_record_id=value("source_record_id") or None,
                     ingestion_method=IngestionMethod.CSV,
                     raw_provenance={key: mapped[key] for key in mapped},
                     warnings=[f"unrecognized finish: {value('finish')}"]
@@ -132,8 +153,20 @@ def parse_csv(
                 continue
             if entry.fingerprint in aggregated:
                 previous = aggregated[entry.fingerprint]
+                if (
+                    previous.condition is not None
+                    and entry.condition is not None
+                    and previous.condition != entry.condition
+                ):
+                    errors.append(
+                        f"row {row_number}: duplicate identity has conflicting conditions"
+                    )
+                    continue
                 aggregated[entry.fingerprint] = previous.model_copy(
-                    update={"quantity": previous.quantity + entry.quantity}
+                    update={
+                        "quantity": previous.quantity + entry.quantity,
+                        "condition": previous.condition or entry.condition,
+                    }
                 )
                 duplicates += 1
             else:

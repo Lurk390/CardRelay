@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from card_relay.domain.enums import Edition, ExtractionCompleteness, Finish, IngestionMethod
 from card_relay.domain.identifiers import (
+    FINGERPRINT_VERSION,
     normalize_collector_number,
     normalize_text,
     stable_fingerprint,
@@ -31,7 +32,10 @@ class CanonicalCardIdentity(BaseModel):
     grading_status: str = "ungraded"
     grading_company: str | None = None
     grade: Decimal | None = None
+    certification_number: str | None = None
     promo: bool = False
+    signed: bool = False
+    altered: bool = False
 
     @field_validator("game", "card_name", "set_name", "set_code", "language", mode="before")
     @classmethod
@@ -64,7 +68,10 @@ class CanonicalCardIdentity(BaseModel):
                 "grading_status": self.grading_status,
                 "grading_company": self.grading_company,
                 "grade": str(self.grade) if self.grade is not None else None,
+                "certification_number": self.certification_number,
                 "promo": self.promo,
+                "signed": self.signed,
+                "altered": self.altered,
             }
         )
 
@@ -74,9 +81,6 @@ class NormalizedSourceRecord(BaseModel):
     quantity: int = Field(gt=0)
     condition: str | None = None
     rarity: str | None = None
-    certification_number: str | None = None
-    signed: bool = False
-    altered: bool = False
     notes: str | None = None
     source_record_id: str | None = None
     destination_ids: dict[str, str] = Field(default_factory=dict)
@@ -129,7 +133,7 @@ class SourceSnapshot(BaseModel):
     source_schema_fingerprint: str
     parser_name: str
     parser_version: str
-    canonical_fingerprint_version: str = "v1"
+    canonical_fingerprint_version: str = FINGERPRINT_VERSION
     completeness: ExtractionCompleteness
     total_unique_entries: int
     total_quantity: int
