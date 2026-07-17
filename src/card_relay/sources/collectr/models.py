@@ -17,6 +17,13 @@ DEFAULT_COLUMN_ALIASES: dict[str, list[str]] = {
     "grading_company": ["grading company", "grader"],
     "grade": ["grade"],
     "promo": ["promo", "promotional"],
+    "printed_set_total": ["set total", "printed total", "total cards"],
+    "rarity": ["rarity"],
+    "certification_number": ["certification number", "cert number", "cert"],
+    "signed": ["signed", "autographed"],
+    "altered": ["altered", "modified"],
+    "notes": ["notes", "note"],
+    "source_record_id": ["record id", "collectr id"],
 }
 
 

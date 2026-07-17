@@ -3,7 +3,7 @@ import json
 import re
 import unicodedata
 
-FINGERPRINT_VERSION = "v1"
+FINGERPRINT_VERSION = "v2"
 
 
 def normalize_text(value: str | None) -> str | None:
