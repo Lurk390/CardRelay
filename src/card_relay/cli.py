@@ -15,7 +15,7 @@ from card_relay.matching import match_collection
 from card_relay.paths import config_path, data_directory
 from card_relay.sources.collectr.csv_source import CollectrCsvSource
 from card_relay.storage.database import create_database
-from card_relay.storage.repositories import SnapshotRepository
+from card_relay.storage.repositories import SnapshotRepository, SyncAuditRepository
 from card_relay.sync.executor import execute_plan
 from card_relay.sync.planner import build_plan
 from card_relay.sync.policy import SyncPolicy
@@ -181,7 +181,7 @@ def _create_plan(
     )
 
 
-def _plan_summary(item: SyncPlan) -> dict[str, object]:
+def _plan_summary(item: SyncPlan, plan_id: int | None = None) -> dict[str, object]:
     counts = {kind.value: 0 for kind in OperationType}
     for operation in item.operations:
         counts[operation.operation_type.value] += 1
@@ -191,6 +191,7 @@ def _plan_summary(item: SyncPlan) -> dict[str, object]:
         "operations": counts,
         "executable_operations": len(item.executable_operations),
         "warnings": item.warnings,
+        "plan_id": plan_id,
     }
 
 
@@ -229,7 +230,9 @@ def plan(
         maximum_removal_percent=maximum_removal_percent,
     )
     item, _, _ = _create_plan(csv_path, source, destination, policy)
-    _emit(_plan_summary(item), as_json)
+    audit = SyncAuditRepository(create_database(data_directory() / "card-relay.db"))
+    plan_id = audit.add_plan(item)
+    _emit(_plan_summary(item, plan_id), as_json)
 
 
 @app.command()
@@ -256,19 +259,30 @@ def sync(
         maximum_removal_percent=maximum_removal_percent,
     )
     item, adapter, current_snapshot = _create_plan(csv_path, source, destination, policy)
-    summary = _plan_summary(item)
+    audit = SyncAuditRepository(create_database(data_directory() / "card-relay.db"))
+    plan_id = audit.add_plan(item)
+    summary = _plan_summary(item, plan_id)
     if dry_run:
-        _emit({**summary, "applied": False, "dry_run": True}, as_json)
+        result = execute_plan(item, adapter, dry_run=True)
+        run_id = audit.add_run(plan_id, result)
+        _emit({**summary, "run_id": run_id, "applied": False, "dry_run": True}, as_json)
         return
     if item.executable_operations and not yes:
         typer.confirm("Apply the listed safe operations?", abort=True)
     result = execute_plan(item, adapter, dry_run=False)
+    run_id = audit.add_run(plan_id, result)
     if result.succeeded:
         SnapshotRepository(create_database(data_directory() / "card-relay.db")).add(
             current_snapshot
         )
     _emit(
-        {**summary, "applied": True, "dry_run": False, "succeeded": result.succeeded},
+        {
+            **summary,
+            "run_id": run_id,
+            "applied": True,
+            "dry_run": False,
+            "succeeded": result.succeeded,
+        },
         as_json,
     )
     if not result.succeeded:

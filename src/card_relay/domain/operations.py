@@ -1,12 +1,13 @@
-from uuid import uuid4
+import hashlib
+import json
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from card_relay.domain.enums import ExtractionCompleteness, OperationType
 
 
 class SyncOperation(BaseModel):
-    operation_id: str = Field(default_factory=lambda: str(uuid4()))
+    operation_id: str = ""
     operation_type: OperationType
     fingerprint: str
     destination_id: str | None = None
@@ -14,6 +15,26 @@ class SyncOperation(BaseModel):
     desired_quantity: int = Field(ge=0)
     executable: bool = False
     reason: str
+
+    @model_validator(mode="after")
+    def create_deterministic_id(self) -> "SyncOperation":
+        if self.operation_id:
+            return self
+        payload = json.dumps(
+            {
+                "operation_type": self.operation_type.value,
+                "fingerprint": self.fingerprint,
+                "destination_id": self.destination_id,
+                "current_quantity": self.current_quantity,
+                "desired_quantity": self.desired_quantity,
+                "executable": self.executable,
+                "reason": self.reason,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self.operation_id = f"op-v1:{hashlib.sha256(payload.encode()).hexdigest()}"
+        return self
 
 
 class SyncPlan(BaseModel):
