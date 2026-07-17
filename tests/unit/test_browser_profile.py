@@ -3,9 +3,11 @@ from card_relay.browser.profile import (
     browser_profile_present,
     clear_browser_profile,
 )
+from card_relay.exceptions import IntegrationUnavailableError
 from card_relay.sources.collectr.browser_session import (
     BrowserInspectionDiagnostics,
     _classify_browser_launch_error,
+    validate_cdp_endpoint,
 )
 
 
@@ -52,3 +54,14 @@ def test_browser_launch_errors_are_actionable_and_safety_preserving() -> None:
     assert "--with-deps" in libraries
     missing = _classify_browser_launch_error("Executable doesn't exist")
     assert "playwright install chromium" in missing
+
+
+def test_cdp_endpoint_is_restricted_to_loopback() -> None:
+    validate_cdp_endpoint("http://127.0.0.1:9222")
+    validate_cdp_endpoint("http://localhost:9222")
+    try:
+        validate_cdp_endpoint("http://192.0.2.1:9222")
+    except IntegrationUnavailableError as error:
+        assert "loopback" in str(error)
+    else:
+        raise AssertionError("non-loopback CDP endpoint was accepted")

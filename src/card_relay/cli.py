@@ -222,7 +222,7 @@ def collectr_inspect(
 DEX_WEB_URL = "https://app.dextcg.com/"
 
 
-def _run_dex_browser(action: str) -> None:
+def _run_dex_browser(action: str, cdp_url: str | None = None) -> None:
     settings = load_settings().collectr.browser
     manager = BrowserSessionManager(
         browser_profile_directory("dex"), settings.navigation_timeout_seconds
@@ -234,12 +234,15 @@ def _run_dex_browser(action: str) -> None:
             default="",
             show_default=False,
         ),
+        cdp_url,
     )
 
 
 @dex_app.command("login")
-def dex_login() -> None:
-    _run_dex_browser("login")
+def dex_login(
+    cdp_url: Annotated[str | None, typer.Option("--cdp-url")] = None,
+) -> None:
+    _run_dex_browser("login", cdp_url)
     typer.echo("Dex browser profile saved locally; authentication remains unverified.")
 
 
@@ -270,6 +273,7 @@ def dex_clear_session(
 @dex_app.command("inspect")
 def dex_inspect(
     as_json: Annotated[bool, typer.Option("--json")] = False,
+    cdp_url: Annotated[str | None, typer.Option("--cdp-url")] = None,
 ) -> None:
     settings = load_settings().collectr.browser
     manager = BrowserSessionManager(
@@ -282,6 +286,7 @@ def dex_inspect(
             default="",
             show_default=False,
         ),
+        cdp_url,
     )
     _emit(
         {
