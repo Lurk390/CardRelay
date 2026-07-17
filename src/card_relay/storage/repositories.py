@@ -60,3 +60,18 @@ class SnapshotRepository:
                 )
             )
             session.commit()
+
+    def latest_trusted(self, source_application: str = "collectr") -> SourceSnapshot | None:
+        with Session(self.engine) as session:
+            row = session.scalar(
+                select(SnapshotRow)
+                .where(
+                    SnapshotRow.source_application == source_application,
+                    SnapshotRow.trusted == 1,
+                )
+                .order_by(SnapshotRow.created_at.desc())
+                .limit(1)
+            )
+            if row is None:
+                return None
+            return SourceSnapshot.model_validate(row.metadata_json)

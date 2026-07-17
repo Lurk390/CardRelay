@@ -13,12 +13,15 @@ def build_plan(
     capabilities: DestinationCapabilities,
     policy: SyncPolicy,
     destination_name: str = "mock",
+    destructive_planning_allowed: bool = True,
 ) -> SyncPlan:
     entries = {entry.fingerprint: entry for entry in source.entries}
     actual = {entry.destination_id: entry for entry in destination}
     matched_ids: set[str] = set()
     operations: list[SyncOperation] = []
-    destructive_allowed = source.completeness is ExtractionCompleteness.COMPLETE
+    destructive_allowed = (
+        source.completeness is ExtractionCompleteness.COMPLETE and destructive_planning_allowed
+    )
     for match in sorted(matches, key=lambda item: item.source_fingerprint):
         desired = entries[match.source_fingerprint]
         if match.status is not MatchStatus.EXACT or match.candidate is None:
