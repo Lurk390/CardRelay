@@ -1,0 +1,11 @@
+name: Feature request
+description: Propose a focused capability
+body:
+  - type: textarea
+    id: need
+    attributes: { label: User need }
+    validations: { required: true }
+  - type: textarea
+    id: safety
+    attributes: { label: Safety and compatibility considerations }
+
