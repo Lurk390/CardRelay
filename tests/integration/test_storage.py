@@ -14,6 +14,10 @@ def test_mapping_persistence(tmp_path) -> None:
     repository = MappingRepository(engine)
     repository.confirm("v1:abc", "mock", "mock-1")
     assert repository.list_confirmed("mock") == {"v1:abc": "mock-1"}
+    repository.reject("v1:abc", "mock", "mock-1")
+    assert repository.list_confirmed("mock") == {}
+    assert repository.list_rejected("mock") == {"v1:abc": {"mock-1"}}
+    assert repository.list_all()[0]["status"] == "rejected"
 
 
 def test_latest_trusted_snapshot_ignores_untrusted(tmp_path) -> None:

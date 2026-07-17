@@ -7,8 +7,10 @@ def match_collection(
     source: CanonicalCollection,
     catalog: list[DestinationCatalogRecord],
     saved: dict[str, str] | None = None,
+    rejected: dict[str, set[str]] | None = None,
 ) -> list[MatchResult]:
     saved = saved or {}
+    rejected = rejected or {}
     by_id = {record.destination_id: record for record in catalog}
     results: list[MatchResult] = []
     for entry in sorted(source.entries, key=lambda item: item.fingerprint):
@@ -29,6 +31,7 @@ def match_collection(
             record
             for record in catalog
             if record.identity.fingerprint == entry.identity.fingerprint
+            and record.destination_id not in rejected.get(entry.fingerprint, set())
         ]
         if len(candidates) == 1:
             candidate = candidates[0]
@@ -53,10 +56,13 @@ def match_collection(
                 )
             )
         else:
+            status = (
+                MatchStatus.REJECTED if rejected.get(entry.fingerprint) else MatchStatus.UNMATCHED
+            )
             results.append(
                 MatchResult(
                     source_fingerprint=entry.fingerprint,
-                    status=MatchStatus.UNMATCHED,
+                    status=status,
                     reasons=["no exact variant-sensitive identity"],
                 )
             )

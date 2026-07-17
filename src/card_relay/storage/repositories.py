@@ -41,6 +41,57 @@ class MappingRepository:
             )
             return {row.source_fingerprint: row.destination_id for row in rows}
 
+    def reject(self, fingerprint: str, destination: str, destination_id: str) -> None:
+        with Session(self.engine) as session:
+            row = session.scalar(
+                select(MappingRow).where(
+                    MappingRow.source_fingerprint == fingerprint,
+                    MappingRow.destination_name == destination,
+                )
+            )
+            if row:
+                row.destination_id, row.status = destination_id, "rejected"
+            else:
+                session.add(
+                    MappingRow(
+                        source_fingerprint=fingerprint,
+                        destination_name=destination,
+                        destination_id=destination_id,
+                        status="rejected",
+                    )
+                )
+            session.commit()
+
+    def list_rejected(self, destination: str) -> dict[str, set[str]]:
+        with Session(self.engine) as session:
+            rows = session.scalars(
+                select(MappingRow).where(
+                    MappingRow.destination_name == destination,
+                    MappingRow.status == "rejected",
+                )
+            )
+            result: dict[str, set[str]] = {}
+            for row in rows:
+                result.setdefault(row.source_fingerprint, set()).add(row.destination_id)
+            return result
+
+    def list_all(self) -> list[dict[str, str]]:
+        with Session(self.engine) as session:
+            rows = session.scalars(
+                select(MappingRow).order_by(
+                    MappingRow.destination_name, MappingRow.source_fingerprint
+                )
+            )
+            return [
+                {
+                    "source_fingerprint": row.source_fingerprint,
+                    "destination": row.destination_name,
+                    "destination_id": row.destination_id,
+                    "status": row.status,
+                }
+                for row in rows
+            ]
+
 
 class SnapshotRepository:
     def __init__(self, engine: Engine) -> None:

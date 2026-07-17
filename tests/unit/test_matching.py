@@ -41,3 +41,20 @@ def test_duplicate_exact_candidates_are_ambiguous() -> None:
         DestinationCatalogRecord(destination_id=value, identity=identity) for value in ("a", "b")
     ]
     assert match_collection(source, catalog)[0].status is MatchStatus.AMBIGUOUS
+
+
+def test_rejected_candidate_is_not_reselected() -> None:
+    identity = CanonicalCardIdentity(
+        card_name="Embermouse", set_name="Mythic Sparks", collector_number="1"
+    )
+    source = CanonicalCollection(
+        entries=[
+            CanonicalCollectionEntry(
+                identity=identity, quantity=1, ingestion_method=IngestionMethod.CSV
+            )
+        ]
+    )
+    candidate = DestinationCatalogRecord(destination_id="rejected", identity=identity)
+    result = match_collection(source, [candidate], rejected={identity.fingerprint: {"rejected"}})
+    assert result[0].status is MatchStatus.REJECTED
+    assert result[0].candidate is None

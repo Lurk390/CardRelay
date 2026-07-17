@@ -86,3 +86,15 @@ def test_trusted_snapshot_drop_blocks_opted_in_destruction(tmp_path: Path) -> No
     payload = json.loads(result.stdout)
     assert payload["executable_operations"] == 0
     assert any("failure threshold" in warning for warning in payload["warnings"])
+
+
+def test_mapping_commands_persist_confirmed_and_rejected_state(tmp_path: Path) -> None:
+    runner = CliRunner(env={"CARD_RELAY_DATA_DIRECTORY": str(tmp_path)})
+    confirm = runner.invoke(app, ["mappings", "confirm", "v1:fixture", "mock-card"])
+    assert confirm.exit_code == 0
+    listed = runner.invoke(app, ["mappings", "list", "--json"])
+    assert json.loads(listed.stdout)["mappings"][0]["status"] == "confirmed"
+    reject = runner.invoke(app, ["mappings", "reject", "v1:fixture", "mock-card"])
+    assert reject.exit_code == 0
+    listed = runner.invoke(app, ["mappings", "list", "--json"])
+    assert json.loads(listed.stdout)["mappings"][0]["status"] == "rejected"
