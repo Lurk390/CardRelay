@@ -26,6 +26,7 @@ uv run card-relay sync --csv tests/fixtures/collectr/plausible_export.csv --dest
 ```
 
 Browser commands (`collectr login`, `inspect`, and related session commands) fail closed until Milestone 2. Dex transport is likewise disabled pending documented research.
+The current Collectr browser research harness can open a visible, persistent local browser but does not yet claim that authentication or extraction succeeded. Install Chromium with `uv run playwright install chromium`, then use `uv run card-relay collectr login`. An explicit `--url` may be supplied during authorized research because no official Collectr web-portfolio URL has been verified.
 
 ## Architecture
 

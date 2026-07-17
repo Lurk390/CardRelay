@@ -1,3 +1,3 @@
-from card_relay.cli import app
+from card_relay.cli import main
 
-app()
+main()
