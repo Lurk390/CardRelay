@@ -1,0 +1,12 @@
+name: Bug report
+description: Report reproducible incorrect behavior without private data
+body:
+  - type: textarea
+    id: behavior
+    attributes: { label: Behavior, description: Use fictional or sanitized examples. }
+    validations: { required: true }
+  - type: textarea
+    id: reproduction
+    attributes: { label: Reproduction }
+    validations: { required: true }
+

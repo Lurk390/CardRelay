@@ -1,0 +1,20 @@
+application:
+  data_directory: null
+  log_level: INFO
+collectr:
+  mode: auto
+  csv:
+    column_aliases:
+      card_name: [card, card name, name]
+      set_name: [set, set name, expansion]
+      collector_number: [number, collector number, card number]
+      quantity: [quantity, qty, count]
+sync:
+  dry_run: true
+  allow_additions: true
+  allow_quantity_increases: true
+  allow_quantity_decreases: false
+  allow_removals: false
+  maximum_removal_count: 0
+  maximum_removal_percent: 0
+

@@ -1,0 +1,13 @@
+name: Integration research
+description: Document sanitized, authorized platform research
+body:
+  - type: markdown
+    attributes: { value: "Never attach tokens, cookies, credentials, private endpoints, real portfolios, or unsanitized traffic." }
+  - type: textarea
+    id: contract
+    attributes: { label: Verified behavior and sanitized evidence }
+    validations: { required: true }
+  - type: textarea
+    id: unknowns
+    attributes: { label: Unknowns and safety constraints }
+
