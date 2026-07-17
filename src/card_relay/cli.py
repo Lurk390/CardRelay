@@ -510,9 +510,10 @@ def mappings_reject(
     typer.echo("mapping rejected")
 
 
-def main() -> None:
+def main() -> int:
     try:
         app()
     except CardRelayError as error:
         typer.echo(str(error), err=True)
-        raise typer.Exit(2) from error
+        return 2
+    return 0

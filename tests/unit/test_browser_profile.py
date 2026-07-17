@@ -3,7 +3,10 @@ from card_relay.browser.profile import (
     browser_profile_present,
     clear_browser_profile,
 )
-from card_relay.sources.collectr.browser_session import BrowserInspectionDiagnostics
+from card_relay.sources.collectr.browser_session import (
+    BrowserInspectionDiagnostics,
+    _classify_browser_launch_error,
+)
 
 
 def test_browser_profile_status_and_clear(monkeypatch, tmp_path) -> None:
@@ -37,3 +40,15 @@ def test_inspection_diagnostics_record_only_safe_counts() -> None:
         "server_error_count": 1,
     }
     assert "authorization" not in diagnostics.model_dump_json()
+
+
+def test_browser_launch_errors_are_actionable_and_safety_preserving() -> None:
+    display = _classify_browser_launch_error("Missing X server or $DISPLAY")
+    assert "desktop display" in display
+    assert "headless authentication is intentionally disabled" in display
+    libraries = _classify_browser_launch_error(
+        "error while loading shared libraries: libasound.so.2"
+    )
+    assert "--with-deps" in libraries
+    missing = _classify_browser_launch_error("Executable doesn't exist")
+    assert "playwright install chromium" in missing
