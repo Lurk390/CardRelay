@@ -8,11 +8,14 @@ Verified against the visible Collectr web client on 2026-07-18:
 - the client continues while a response contains records, so the empty terminal response is required pagination evidence;
 - the response fields consumed by the client include product and owned-record identifiers, product name, game/category, set/group, card number, subtype/finish, condition identifier, quantity, grading identifier, rarity, language when available, card/product type, and watchlist state;
 - the current portfolio bundle uses grade ID `52` as its ungraded sentinel; other non-null grade IDs still require a recognized grading-scale lookup;
+- the client stores its condition and grading dictionaries in expiring local cache entries named `cardConditions` and `gradedCardScales`; these are the same values returned by the verified read-only metadata endpoints;
 - the overview exposes a Cards quantity total; it is not a unique-product count;
 - the rendered grid contains set, collector number, condition, finish, and quantity, but not a reliable game field, so DOM fallback must not guess game identity;
 - no current `application/json` script containing portfolio records was observed, so embedded parsing remains a bounded fallback rather than the preferred path.
 
 Raw response bodies and account identifiers are never written to fixtures, diagnostics, logs, or snapshots. Tests use only fictional sanitized payloads. Schema fingerprints retain field names, strategy, and contract version but no scalar collection values. Collection extraction fails closed when page discovery, response shape, batch ordering, visible totals, conditions, grading, or card identity cannot be validated.
+
+The extension checks only the two verified metadata-cache keys above, enforces a 512 KiB bound per entry, validates the cache's expiry wrapper, and never enumerates or forwards other local-storage values. This fallback is needed because the current client may satisfy its metadata queries from cache and therefore emit no network response during a capture. The Python companion treats cached metadata as untrusted and applies the same bounded condition/grading parsers used for observed network responses.
 
 The browser integration does not bypass sign-in, human-verification challenges, access controls, rate limits, or anti-bot protections. Authentication occurs in a visible user-controlled persistent profile and can be removed with `collectr clear-session`.
 

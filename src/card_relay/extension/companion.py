@@ -14,6 +14,7 @@ from card_relay.sources.collectr.browser_capture import (
     extract_grade_details,
 )
 from card_relay.sources.collectr.browser_source import CollectrBrowserSource
+from card_relay.sources.collectr.parsers.browser_fixture_parser import BrowserInvalidRecordCounts
 from card_relay.sources.collectr.parsers.collectr_web_contract import (
     BrowserGradeDetails,
     build_capture_from_collectr_responses,
@@ -58,6 +59,7 @@ class CompanionCaptureResult(BaseModel):
     total_quantity: int
     pagination_complete: bool
     invalid_record_count: int
+    invalid_record_reasons: BrowserInvalidRecordCounts
     skipped_watchlist_count: int
     skipped_non_card_count: int
     trusted_for_destructive_planning: Literal[False] = False
@@ -95,6 +97,7 @@ def process_collectr_capture(
         total_quantity=collection.total_quantity,
         pagination_complete=diagnostics.pagination_complete,
         invalid_record_count=diagnostics.invalid_record_count,
+        invalid_record_reasons=diagnostics.invalid_record_reasons,
         skipped_watchlist_count=diagnostics.skipped_watchlist_count,
         skipped_non_card_count=diagnostics.skipped_non_card_count,
         warnings=diagnostics.warnings,
@@ -162,8 +165,14 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             body = self.rfile.read(content_length)
             payload = json.loads(body)
             result = process_collectr_capture(payload, self.server.database_path)
-        except (UnicodeDecodeError, json.JSONDecodeError, ValidationError, SourceValidationError):
-            self._write_json(400, {"error": "invalid_capture"})
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._write_json(400, {"error": "invalid_capture_json"})
+            return
+        except ValidationError:
+            self._write_json(400, {"error": "invalid_capture_contract"})
+            return
+        except SourceValidationError:
+            self._write_json(400, {"error": "invalid_capture_source"})
             return
         except CardRelayError:
             self._write_json(422, {"error": "capture_rejected"})

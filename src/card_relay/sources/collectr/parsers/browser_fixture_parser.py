@@ -60,6 +60,23 @@ class BrowserCaptureBatch(BaseModel):
     final_batch: bool = False
 
 
+class BrowserInvalidRecordCounts(BaseModel):
+    """Non-sensitive reason counts for records that prevented a complete capture."""
+
+    capture_error: int = Field(default=0, ge=0)
+    aggregate_view: int = Field(default=0, ge=0)
+    missing_identity: int = Field(default=0, ge=0)
+    unsupported_finish: int = Field(default=0, ge=0)
+    unresolved_condition: int = Field(default=0, ge=0)
+    unresolved_grading: int = Field(default=0, ge=0)
+    non_positive_quantity: int = Field(default=0, ge=0)
+    conflicting_condition: int = Field(default=0, ge=0)
+
+    @property
+    def total(self) -> int:
+        return sum(int(value) for value in self.model_dump().values())
+
+
 class BrowserCaptureEnvelope(BaseModel):
     contract_version: Literal["collectr-browser-v1"]
     strategy: BrowserCaptureStrategy
@@ -68,6 +85,9 @@ class BrowserCaptureEnvelope(BaseModel):
     visible_unique_record_count: int | None = Field(default=None, ge=0)
     expected_batch_count: int | None = Field(default=None, ge=1)
     invalid_record_count: int = Field(default=0, ge=0)
+    invalid_record_reasons: BrowserInvalidRecordCounts = Field(
+        default_factory=BrowserInvalidRecordCounts
+    )
     skipped_non_card_count: int = Field(default=0, ge=0)
     source_schema_fields: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -79,6 +99,8 @@ class BrowserCaptureEnvelope(BaseModel):
             raise ValueError("capture batches must be consecutively numbered from 1")
         if any(batch.final_batch for batch in self.batches[:-1]):
             raise ValueError("only the last capture batch may be final")
+        if self.invalid_record_reasons.total > self.invalid_record_count:
+            raise ValueError("invalid record reason counts exceed the invalid record total")
         return self
 
 
@@ -99,6 +121,9 @@ class BrowserExtractionDiagnostics(BaseModel):
     duplicate_record_count: int = Field(default=0, ge=0)
     skipped_watchlist_count: int = Field(default=0, ge=0)
     invalid_record_count: int = Field(default=0, ge=0)
+    invalid_record_reasons: BrowserInvalidRecordCounts = Field(
+        default_factory=BrowserInvalidRecordCounts
+    )
     skipped_non_card_count: int = Field(default=0, ge=0)
     warnings: list[str] = Field(default_factory=list)
 
@@ -236,6 +261,15 @@ class CollectrBrowserParser:
                 f"skipped {skipped_watchlist_count} watchlist-only record(s) without quantity"
             )
         effective_invalid_count = capture.invalid_record_count + lossy_record_count
+        invalid_record_reasons = capture.invalid_record_reasons
+        if lossy_record_count:
+            invalid_record_reasons = invalid_record_reasons.model_copy(
+                update={
+                    "conflicting_condition": (
+                        invalid_record_reasons.conflicting_condition + lossy_record_count
+                    )
+                }
+            )
         if effective_invalid_count:
             warnings.append(
                 f"encountered {effective_invalid_count} invalid or lossy browser record(s); "
@@ -270,6 +304,7 @@ class CollectrBrowserParser:
             duplicate_record_count=duplicate_count,
             skipped_watchlist_count=skipped_watchlist_count,
             invalid_record_count=effective_invalid_count,
+            invalid_record_reasons=invalid_record_reasons,
             skipped_non_card_count=capture.skipped_non_card_count,
             warnings=warnings,
         )

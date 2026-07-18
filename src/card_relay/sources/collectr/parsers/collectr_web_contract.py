@@ -1,6 +1,7 @@
 import re
 from collections.abc import Mapping
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -11,10 +12,19 @@ from card_relay.sources.collectr.parsers.browser_fixture_parser import (
     BrowserCaptureEnvelope,
     BrowserCaptureRecord,
     BrowserCaptureStrategy,
+    BrowserInvalidRecordCounts,
 )
 from card_relay.sources.collectr.parsers.csv_parser import parse_finish
 
 _COLLECTR_UNGRADED_GRADE_IDS = {"52"}
+type _InvalidRecordReason = Literal[
+    "capture_error",
+    "missing_identity",
+    "unsupported_finish",
+    "unresolved_condition",
+    "unresolved_grading",
+    "non_positive_quantity",
+]
 
 
 class CollectrProductRecord(BaseModel):
@@ -41,7 +51,15 @@ class CollectrProductRecord(BaseModel):
 class CollectrProductsPage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    data: list[CollectrProductRecord]
+    data: list[object]
+
+
+class CollectrProductKind(BaseModel):
+    """The discriminator validated before any card-only fields are required."""
+
+    model_config = ConfigDict(extra="allow")
+
+    is_card: bool
 
 
 class BrowserGradeDetails(BaseModel):
@@ -67,6 +85,7 @@ def build_capture_from_collectr_responses(
     grades = grade_details or {}
     batches: list[BrowserCaptureBatch] = []
     invalid_count = 0
+    invalid_reasons: dict[_InvalidRecordReason, int] = {}
     skipped_non_card_count = 0
     terminal_page_seen = False
     source_schema_fields: set[str] = set()
@@ -83,21 +102,36 @@ def build_capture_from_collectr_responses(
             break
 
         records: list[BrowserCaptureRecord] = []
-        for product in page.data:
+        for raw_product in page.data:
+            try:
+                kind = CollectrProductKind.model_validate(raw_product)
+            except ValidationError:
+                invalid_count += 1
+                invalid_reasons["capture_error"] = invalid_reasons.get("capture_error", 0) + 1
+                continue
+            if not kind.is_card:
+                skipped_non_card_count += 1
+                continue
+            try:
+                product = CollectrProductRecord.model_validate(raw_product)
+            except ValidationError:
+                invalid_count += 1
+                invalid_reasons["capture_error"] = invalid_reasons.get("capture_error", 0) + 1
+                continue
             source_schema_fields.update(
                 field
                 for field in product.model_fields_set
                 if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,63}", field)
             )
-            if not product.is_card:
-                skipped_non_card_count += 1
-                continue
-            converted, lossy = _convert_product(product, conditions, grades)
+            converted, invalid_reason = _convert_product(product, conditions, grades)
             if converted is None:
                 invalid_count += 1
+                if invalid_reason is not None:
+                    invalid_reasons[invalid_reason] = invalid_reasons.get(invalid_reason, 0) + 1
                 continue
-            if lossy:
+            if invalid_reason is not None:
                 invalid_count += 1
+                invalid_reasons[invalid_reason] = invalid_reasons.get(invalid_reason, 0) + 1
             records.append(converted)
         batches.append(
             BrowserCaptureBatch(
@@ -119,6 +153,7 @@ def build_capture_from_collectr_responses(
         visible_total_quantity=visible_total_quantity,
         expected_batch_count=len(batches) if terminal_page_seen else None,
         invalid_record_count=invalid_count,
+        invalid_record_reasons=BrowserInvalidRecordCounts.model_validate(invalid_reasons),
         skipped_non_card_count=skipped_non_card_count,
         source_schema_fields=sorted(source_schema_fields),
     )
@@ -175,6 +210,7 @@ def build_capture_from_dom_records(
         visible_total_quantity=visible_total_quantity,
         expected_batch_count=1 if end_of_scroll_observed else None,
         invalid_record_count=invalid_count,
+        invalid_record_reasons=BrowserInvalidRecordCounts(missing_identity=invalid_count),
         warnings=["DOM fallback was used because the structured response contract was unavailable"],
     )
 
@@ -183,23 +219,24 @@ def _convert_product(
     product: CollectrProductRecord,
     conditions: dict[str, str],
     grades: dict[str, BrowserGradeDetails],
-) -> tuple[BrowserCaptureRecord | None, bool]:
+) -> tuple[BrowserCaptureRecord | None, _InvalidRecordReason | None]:
     if product.quantity <= 0 and not product.watchlist:
-        return None, False
+        return None, "non_positive_quantity"
     if not product.card_number:
-        return None, False
+        return None, "missing_identity"
     finish_name = product.product_sub_type or "Normal"
     if parse_finish(finish_name) is Finish.APPLICATION_SPECIFIC:
-        return None, False
+        return None, "unsupported_finish"
     condition = _condition_name(product.card_condition, conditions)
     condition_is_lossy = product.card_condition is not None and condition is None
     grade_identifier = str(product.grade_id) if product.grade_id is not None else None
     is_ungraded = grade_identifier is None or grade_identifier in _COLLECTR_UNGRADED_GRADE_IDS
     grade = None if is_ungraded else grades.get(str(product.grade_id))
     if not is_ungraded and grade is None:
-        return None, False
-    source_record_id = product.user_owned_product_id or (
-        f"{product.product_id}:{product.grade_id or ''}:"
+        return None, "unresolved_grading"
+    holding_id = product.user_owned_product_id or product.product_id
+    source_record_id = (
+        f"{holding_id}:{product.grade_id or ''}:"
         f"{product.product_sub_type or ''}:{product.card_condition or ''}"
     )
     return (
@@ -218,7 +255,7 @@ def _convert_product(
             watchlist=product.watchlist,
             source_record_id=str(source_record_id),
         ),
-        condition_is_lossy,
+        "unresolved_condition" if condition_is_lossy else None,
     )
 
 

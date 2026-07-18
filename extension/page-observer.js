@@ -8,6 +8,11 @@
     ["/data/card-conditions", "conditions"],
     ["/data/grading-scales", "grading"]
   ]);
+  const cachedMetadata = new Map([
+    ["cardConditions", "conditions"],
+    ["gradedCardScales", "grading"]
+  ]);
+  const maximumCachedLookupBytes = 512 * 1024;
 
   function describeEndpoint(rawUrl) {
     let url;
@@ -38,6 +43,40 @@
     window.postMessage({ channel, type: "response", ...descriptor, payload }, location.origin);
   }
 
+  function publishLookup(endpoint, payload) {
+    if (payload === null || typeof payload !== "object") return;
+    window.postMessage({ channel, type: "response", endpoint, payload }, location.origin);
+  }
+
+  function readCachedLookup(key) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw || raw.length > maximumCachedLookupBytes) return null;
+      const cached = JSON.parse(raw);
+      if (!cached || typeof cached !== "object" || !("value" in cached)) return null;
+      const expiry = cached.expiry === "Infinity" ? Infinity : Number(cached.expiry);
+      if (!Number.isFinite(expiry) && expiry !== Infinity) return null;
+      if (expiry !== Infinity && Date.now() > expiry) return null;
+      return cached.value;
+    } catch {
+      return null;
+    }
+  }
+
+  function publishCachedLookups() {
+    for (const [key, endpoint] of cachedMetadata) {
+      const payload = readCachedLookup(key);
+      if (payload !== null) publishLookup(endpoint, payload);
+    }
+  }
+
+  window.addEventListener("message", event => {
+    if (event.source !== window || event.origin !== location.origin) return;
+    const message = event.data;
+    if (!message || message.channel !== channel || message.type !== "lookup-request") return;
+    publishCachedLookups();
+  });
+
   const originalFetch = window.fetch;
   window.fetch = async function (...args) {
     const response = await Reflect.apply(originalFetch, this, args);
@@ -60,4 +99,6 @@
     }, { once: true });
     return Reflect.apply(originalOpen, this, [method, url, ...rest]);
   };
+
+  publishCachedLookups();
 })();

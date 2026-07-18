@@ -49,6 +49,7 @@ def test_extension_capture_reuses_browser_normalization_and_stores_snapshot(
     assert result.total_quantity == 4
     assert result.pagination_complete
     assert result.skipped_non_card_count == 1
+    assert result.invalid_record_reasons.total == 0
     assert result.trusted_for_destructive_planning is False
     assert result.destination_writes_enabled is False
     with Session(create_database(database_path)) as session:
@@ -111,7 +112,53 @@ def test_companion_requires_pairing_token_and_returns_only_preview(tmp_path: Pat
         assert accepted.status == 201
         assert payload["destination_writes_enabled"] is False
         assert payload["trusted_for_destructive_planning"] is False
+        assert payload["invalid_record_reasons"] == {
+            "capture_error": 0,
+            "aggregate_view": 0,
+            "missing_identity": 0,
+            "unsupported_finish": 0,
+            "unresolved_condition": 0,
+            "unresolved_grading": 0,
+            "non_positive_quantity": 0,
+            "conflicting_condition": 0,
+        }
         assert "entries" not in payload
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_error"),
+    [
+        ("{", "invalid_capture_json"),
+        (json.dumps({"contract_version": "collectr-extension-v1"}), "invalid_capture_contract"),
+    ],
+)
+def test_companion_reports_safe_capture_rejection_stage(
+    tmp_path: Path, body: str, expected_error: str
+) -> None:
+    server, token = serve_companion(tmp_path / "card-relay.db", 0, lambda: "test-token")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+    try:
+        connection.request(
+            "POST",
+            "/v1/collectr/captures",
+            body=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+
+        assert response.status == 400
+        assert payload == {"error": expected_error}
     finally:
         connection.close()
         server.shutdown()
@@ -141,3 +188,14 @@ def test_extension_preserves_only_lookup_metadata_across_navigation() -> None:
         "productPages"
         not in content_script.split("async function persistSessionState", 1)[1].split("}", 1)[0]
     )
+
+
+def test_extension_reads_only_verified_cached_lookup_keys() -> None:
+    observer = (EXTENSION / "page-observer.js").read_text(encoding="utf-8")
+
+    assert '["cardConditions", "conditions"]' in observer
+    assert '["gradedCardScales", "grading"]' in observer
+    assert "localStorage.getItem(key)" in observer
+    assert "lookup-request" in observer
+    assert "Object.keys(localStorage)" not in observer
+    assert "localStorage.key(" not in observer

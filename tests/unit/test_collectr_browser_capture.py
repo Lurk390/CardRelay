@@ -93,6 +93,7 @@ def test_missing_condition_lookup_keeps_safe_partial_records() -> None:
     assert {entry.condition for entry in result.collection.entries} == {None}
     assert result.collection.completeness is ExtractionCompleteness.INCOMPLETE
     assert result.diagnostics.invalid_record_count == 2
+    assert result.diagnostics.invalid_record_reasons.unresolved_condition == 2
 
 
 def test_collectr_grade_52_is_the_verified_ungraded_sentinel() -> None:
@@ -112,6 +113,7 @@ def test_collectr_grade_52_is_the_verified_ungraded_sentinel() -> None:
     assert result.collection.total_quantity == 3
     assert {entry.identity.grading_status for entry in result.collection.entries} == {"ungraded"}
     assert result.diagnostics.invalid_record_count == 0
+    assert result.diagnostics.invalid_record_reasons.total == 0
 
 
 def test_network_capture_ignores_unrelated_responses() -> None:
@@ -134,6 +136,7 @@ def test_aggregate_portfolio_response_cannot_produce_safe_records() -> None:
     assert result.collection.entries == []
     assert result.collection.completeness is ExtractionCompleteness.INCOMPLETE
     assert any("aggregate portfolio view" in warning for warning in result.collection.warnings)
+    assert result.diagnostics.invalid_record_reasons.aggregate_view == 2
 
 
 class FakePage:

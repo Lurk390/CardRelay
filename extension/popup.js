@@ -78,12 +78,16 @@ document.querySelector("#send").addEventListener("click", async () => {
     const response = await chrome.tabs.sendMessage(tab.id, { type: "card-relay-submit" });
     if (!response?.ok) throw new Error(`Preview rejected: ${response?.error || "unknown error"}`);
     const result = response.result;
+    const invalidReasons = Object.entries(result.invalid_record_reasons || {})
+      .filter(([, count]) => count > 0)
+      .map(([reason, count]) => `  ${reason.replaceAll("_", " ")}: ${count}`);
     statusElement.textContent = [
       `Snapshot stored: ${result.snapshot_id}`,
       `Entries: ${result.unique_entries}`,
       `Quantity: ${result.total_quantity}`,
       `Completeness: ${result.completeness}`,
       `Invalid/lossy rows: ${result.invalid_record_count}`,
+      ...invalidReasons,
       `Skipped non-cards: ${result.skipped_non_card_count}`,
       "Destination writes remain disabled."
     ].join("\n");

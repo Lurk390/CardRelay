@@ -140,6 +140,7 @@
   async function prepareCapture() {
     resetCapture();
     captureActive = true;
+    window.postMessage({ channel, type: "lookup-request" }, location.origin);
     const observedTotal = visibleCardTotal();
     if (observedTotal !== null) visibleTotalQuantity = observedTotal;
     await persistSessionState(true);

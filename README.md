@@ -6,7 +6,7 @@ CardRelay is an early open-source trading-card collection synchronization engine
 
 ## Current status
 
-Milestone 1 is complete. Milestone 2 provides a visible persistent Collectr session, verified portfolio discovery, structured response capture, infinite scrolling, embedded-data and DOM fallbacks, completeness diagnostics, sanitized fixtures, CSV equivalence tests, and browser snapshots. Browser extraction remains experimental: it can drive additions and quantity increases, but its reliability gate deliberately prevents decreases and removals. Dex remains scaffolded for later milestones.
+Milestones 1 and 2 are implemented. The browser source provides a visible persistent Collectr session, verified portfolio discovery, structured response capture, infinite scrolling, embedded-data and DOM fallbacks, completeness diagnostics, sanitized fixtures, CSV equivalence tests, and browser snapshots. Browser extraction remains experimental: it can drive additions and quantity increases, but its separate reliability gate deliberately prevents decreases and removals. Dex remains scaffolded for later milestones.
 
 Safety defaults matter: every sync is a dry run, writes require explicit application action, ambiguous records are never applied, and decreases/removals remain blocked unless separately enabled with thresholds. Incomplete sources cannot authorize destructive operations.
 
@@ -81,7 +81,7 @@ The token is stored only in this local Chrome extension profile. Restarting the 
 
 The companion validates the untrusted browser payload with the same Python contract and canonical parser used by the CLI. The popup then reports the snapshot ID, unique-entry count, total quantity, and completeness. Raw response bodies are discarded after validation; SQLite stores snapshot metadata, not the extension's raw portfolio responses.
 
-`complete` means the observed schema, 30-record pagination, empty terminal page, condition/grading metadata, and visible quantity total reconciled. `incomplete` is still useful for observed additions and increases, but omitted cards remain unknown and cannot authorize decreases or removals.
+`complete` means the observed schema, 30-record pagination, empty terminal page, condition/grading metadata, and visible quantity total reconciled. Metadata may come from observed read responses or Collectr's two verified expiring cache entries; CardRelay never enumerates other browser storage. `incomplete` is still useful for observed additions and increases, but omitted cards remain unknown and cannot authorize decreases or removals.
 
 ### Troubleshooting the extension
 
@@ -89,6 +89,7 @@ The companion validates the untrusted browser payload with the same Python contr
 - **Pairing required:** start the companion, copy its current token and port, then save pairing again.
 - **Companion unavailable:** confirm the terminal is still running and that the popup port matches it. Only loopback connections are accepted.
 - **Capture not ready:** return to the portfolio overview and start a fresh capture. Aggregate views, conflicting pages, or offset gaps are rejected.
+- **Invalid capture JSON/contract/source:** the companion reports which validation stage rejected the preview without echoing private card data. Reload the extension and Collectr tab after an extension update; otherwise preserve the status counts and report the stage.
 - **Terminal page says no:** wait for capture to become idle and retry. The preview remains incomplete if Collectr never returns its empty terminal batch.
 - **Preview is incomplete with entries:** CardRelay retained safe ungraded records but could not resolve every condition or graded-card lookup. Omitted or lossy rows are reported and destructive planning stays blocked.
 - **Google rejects Playwright login:** use the extension in normal Chrome. CardRelay does not weaken browser security or disguise automation to bypass that rejection.
@@ -114,7 +115,7 @@ An explicit local mock write remains limited to additions and quantity increases
 uv run card-relay sync --csv tests/fixtures/collectr/plausible_export.csv --destination mock --apply
 ```
 
-The browser source keeps private product payloads in memory only long enough to validate and normalize them. The extension preserves only bounded condition and grading lookup metadata in browser-session storage across navigation. It requests no undocumented write operation, does not bypass login, CAPTCHA, access-control, or rate-limit behavior, and fails closed when completeness evidence is insufficient. Dex transport remains disabled pending its read-only milestone.
+The browser source keeps private product payloads in memory only long enough to validate and normalize them. The extension preserves only bounded condition and grading lookup metadata in browser-session storage across navigation and reads only the two metadata-cache keys verified in Collectr's current client. It requests no undocumented write operation, does not bypass login, CAPTCHA, access-control, or rate-limit behavior, and fails closed when completeness evidence is insufficient. Dex transport remains disabled pending its read-only milestone.
 
 ## Architecture
 
@@ -122,4 +123,4 @@ The browser source keeps private product payloads in memory only long enough to 
 
 Local snapshots may contain private collection metadata. Authentication state is never placed in snapshots and browser profiles remain local and ignored. Users are responsible for complying with each platform's terms; CardRelay does not bypass access controls, anti-bot systems, or rate limits.
 
-Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src`. Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Roadmap: finish browser-extension capture reliability, persistent matching review, researched Dex read-only support, safe writes, controlled destructive sync, then more adapters and extension automation.
+Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src`. Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Roadmap: demonstrate the browser reliability promotion gates, complete persistent matching review, add researched Dex read-only support, safe writes, controlled destructive sync, then more adapters and extension automation.

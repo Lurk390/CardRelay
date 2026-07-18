@@ -19,13 +19,15 @@ This unpacked Manifest V3 extension captures a Collectr portfolio from the user'
 
 After editing extension files, use **Reload** on the extension card at `chrome://extensions` and reload open Collectr tabs. A content-script-unavailable message almost always means the Collectr tab predates the latest extension load.
 
-The pairing token is ephemeral: restarting the companion produces a new token. Private product response bodies remain in the tab until submission and are not written to extension storage. Bounded condition and grading lookup responses are kept in session storage so navigation cannot discard the metadata needed for safe normalization; Chrome clears that state with the browser session. The companion validates captures with CardRelay's existing Collectr parser and stores only the source snapshot metadata already used by the CLI.
+The pairing token is ephemeral: restarting the companion produces a new token. Private product response bodies remain in the tab until submission and are not written to extension storage. Bounded condition and grading lookup responses are kept in session storage so navigation cannot discard the metadata needed for safe normalization; Chrome clears that state with the browser session. If the Collectr client already cached those dictionaries, the page observer reads only its verified `cardConditions` and `gradedCardScales` entries, never arbitrary local storage. The companion validates captures with CardRelay's existing Collectr parser and stores only the source snapshot metadata already used by the CLI.
+
+Rejected previews identify only the safe validation stage (`json`, `contract`, or `source`); CardRelay never returns or logs the offending private payload.
 
 ## Expected preview
 
 The popup reports page progress while the Products view scrolls. When capture is idle, select **Send preview to CardRelay**. A successful response includes the snapshot ID, unique entries, quantity, and completeness. `complete` requires the visible Cards quantity to match the normalized response total and requires contiguous 30-record pages ending in an empty terminal page. An `incomplete` preview cannot imply that an omitted card was removed.
 
-If Collectr does not request its condition or grading lookup during the capture, CardRelay keeps otherwise valid ungraded rows with an unknown condition and counts them as lossy. Graded rows without a recognized grading lookup are omitted rather than guessed. The resulting preview is intentionally incomplete and cannot authorize destructive planning.
+If Collectr neither requests nor has a valid cached condition or grading lookup during the capture, CardRelay keeps otherwise valid ungraded rows with an unknown condition and counts them as lossy. Graded rows without a recognized grading lookup are omitted rather than guessed. The popup reports reason-specific counts; the resulting preview is intentionally incomplete and cannot authorize destructive planning.
 
 ## Troubleshooting
 

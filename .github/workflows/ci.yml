@@ -15,4 +15,9 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy src
       - run: uv run pytest --cov=card_relay --cov-report=term-missing
+      - run: node --check extension/page-observer.js
+      - run: node --check extension/content.js
+      - run: node --check extension/background.js
+      - run: node --check extension/popup.js
+      - run: node --test tests/js/page-observer.test.mjs
 

@@ -115,7 +115,15 @@ class CollectrNetworkCapture:
                 update={
                     "invalid_record_count": (
                         capture.invalid_record_count + self.capture_error_count
-                    )
+                    ),
+                    "invalid_record_reasons": capture.invalid_record_reasons.model_copy(
+                        update={
+                            "capture_error": (
+                                capture.invalid_record_reasons.capture_error
+                                + self.capture_error_count
+                            )
+                        }
+                    ),
                 }
             )
         if not self.exact_view_verified:
@@ -127,6 +135,14 @@ class CollectrNetworkCapture:
                     ],
                     "invalid_record_count": (
                         capture.invalid_record_count + max(discarded_count, 1)
+                    ),
+                    "invalid_record_reasons": capture.invalid_record_reasons.model_copy(
+                        update={
+                            "aggregate_view": (
+                                capture.invalid_record_reasons.aggregate_view
+                                + max(discarded_count, 1)
+                            )
+                        }
                     ),
                     "warnings": [
                         *capture.warnings,

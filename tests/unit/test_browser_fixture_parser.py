@@ -185,6 +185,7 @@ def test_distinct_browser_records_with_conflicting_conditions_are_lossy() -> Non
     assert fixturemon.quantity == 3
     assert fixturemon.condition == "mixed"
     assert result.diagnostics.invalid_record_count == 1
+    assert result.diagnostics.invalid_record_reasons.conflicting_condition == 1
     assert result.collection.completeness is ExtractionCompleteness.INCOMPLETE
 
 
@@ -238,7 +239,54 @@ def test_unknown_grading_mapping_is_skipped_and_forces_incomplete_source() -> No
     result = CollectrBrowserFixtureParser().parse(capture)
 
     assert result.diagnostics.invalid_record_count == 1
+    assert result.diagnostics.invalid_record_reasons.unresolved_grading == 1
     assert result.collection.completeness is ExtractionCompleteness.INCOMPLETE
+
+
+def test_web_response_skips_sparse_non_cards_before_card_validation() -> None:
+    capture = build_capture_from_collectr_responses(
+        [{"data": [{"is_card": False, "product_id": 99}]}, {"data": []}],
+        visible_total_quantity=0,
+    )
+
+    result = CollectrBrowserFixtureParser().parse(capture)
+
+    assert result.collection.completeness is ExtractionCompleteness.COMPLETE
+    assert result.diagnostics.skipped_non_card_count == 1
+    assert result.diagnostics.invalid_record_count == 0
+
+
+def test_web_response_counts_malformed_card_without_rejecting_capture() -> None:
+    capture = build_capture_from_collectr_responses(
+        [{"data": [{"is_card": True, "quantity": 1}]}, {"data": []}],
+        visible_total_quantity=0,
+    )
+
+    result = CollectrBrowserFixtureParser().parse(capture)
+
+    assert result.collection.completeness is ExtractionCompleteness.INCOMPLETE
+    assert result.diagnostics.invalid_record_count == 1
+    assert result.diagnostics.invalid_record_reasons.capture_error == 1
+
+
+def test_collectr_holding_id_is_scoped_by_variant_dimensions() -> None:
+    payloads = _fixture("web_products_pages.json")
+    assert isinstance(payloads, list)
+    first_page = payloads[0]
+    assert isinstance(first_page, dict)
+    first_record = first_page["data"][0]
+    assert isinstance(first_record, dict)
+    alternate_condition = dict(first_record)
+    alternate_condition["card_condition"] = 2
+    capture = build_capture_from_collectr_responses(
+        [{"data": [first_record, alternate_condition]}, {"data": []}],
+        visible_total_quantity=4,
+        condition_names={"1": "Near Mint", "2": "Lightly Played"},
+    )
+
+    records = capture.batches[0].records
+    assert len(records) == 2
+    assert records[0].source_record_id != records[1].source_record_id
 
 
 def test_embedded_products_payload_is_parsed_but_never_assumed_complete() -> None:
