@@ -1,0 +1,90 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, system-ui, sans-serif;
+  background: #101315;
+  color: #f3f6f7;
+}
+
+body {
+  width: 340px;
+  margin: 0;
+}
+
+header, main, section {
+  display: grid;
+  gap: 10px;
+}
+
+header {
+  padding: 18px 18px 12px;
+  background: #151b1e;
+}
+
+h1, p {
+  margin: 0;
+}
+
+h1 {
+  color: #3de0ca;
+  font-size: 22px;
+}
+
+p, #status {
+  color: #b7c2c6;
+  font-size: 13px;
+}
+
+#status {
+  white-space: pre-line;
+}
+
+main {
+  padding: 14px 18px 18px;
+}
+
+section {
+  padding: 12px;
+  border: 1px solid #293237;
+  border-radius: 10px;
+  background: #15191c;
+}
+
+label {
+  font-size: 12px;
+  color: #cbd3d6;
+}
+
+input, button {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  border-radius: 7px;
+  font: inherit;
+}
+
+input {
+  border: 1px solid #354249;
+  padding: 7px 9px;
+  background: #0d1012;
+  color: #f3f6f7;
+}
+
+button {
+  border: 0;
+  padding: 8px 10px;
+  background: #25bca9;
+  color: #06110f;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button.secondary {
+  border: 1px solid #354249;
+  background: #20282c;
+  color: #e6ecee;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}

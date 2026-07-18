@@ -44,3 +44,17 @@ def test_small_drop_remains_allowed() -> None:
     )
     assert assessment.destructive_planning_allowed
     assert not assessment.warnings
+
+
+def test_complete_browser_snapshot_remains_blocked_pending_reliability_approval() -> None:
+    current = snapshot(100, ExtractionCompleteness.COMPLETE).model_copy(
+        update={
+            "ingestion_method": IngestionMethod.BROWSER,
+            "trusted_for_destructive_planning": False,
+        }
+    )
+
+    assessment = assess_source_snapshot(current, None, SyncPolicy())
+
+    assert not assessment.destructive_planning_allowed
+    assert any("not approved" in warning for warning in assessment.warnings)

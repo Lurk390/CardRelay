@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 from urllib.parse import urlparse
 
 import typer
@@ -17,9 +17,13 @@ from card_relay.domain.enums import MatchStatus, OperationType
 from card_relay.domain.models import CanonicalCollection, DestinationCatalogRecord, SourceSnapshot
 from card_relay.domain.operations import SyncPlan
 from card_relay.exceptions import CardRelayError
+from card_relay.extension.companion import serve_companion
 from card_relay.matching import match_collection
 from card_relay.paths import config_path, data_directory
+from card_relay.sources.base import CollectionSource
+from card_relay.sources.collectr.browser_capture import CollectrPortfolioCaptureSession
 from card_relay.sources.collectr.browser_session import BrowserSessionManager
+from card_relay.sources.collectr.browser_source import CollectrBrowserSource
 from card_relay.sources.collectr.csv_source import CollectrCsvSource
 from card_relay.storage.database import create_database
 from card_relay.storage.repositories import (
@@ -37,10 +41,12 @@ collectr_app = typer.Typer(help="Collectr ingestion and browser-session commands
 config_app = typer.Typer(help="Configuration commands.")
 mappings_app = typer.Typer(help="Persistent mapping review commands.")
 dex_app = typer.Typer(help="Dex read-only browser research commands.")
+extension_app = typer.Typer(help="Browser-extension companion commands.")
 app.add_typer(collectr_app, name="collectr")
 app.add_typer(config_app, name="config")
 app.add_typer(mappings_app, name="mappings")
 app.add_typer(dex_app, name="dex")
+app.add_typer(extension_app, name="extension")
 
 
 def _emit(payload: dict[str, object], as_json: bool) -> None:
@@ -65,7 +71,7 @@ def doctor(as_json: Annotated[bool, typer.Option("--json")] = False) -> None:
             "status": "ok",
             "data_directory": str(directory),
             "storage_writable": True,
-            "browser_integration": "scaffolded",
+            "browser_integration": "available",
             "dex_integration": "scaffolded",
         },
         as_json,
@@ -86,12 +92,33 @@ def _csv_source(csv_path: Path) -> CollectrCsvSource:
     return CollectrCsvSource(csv_path, load_settings().collectr.csv.column_aliases)
 
 
+def _browser_source() -> CollectrBrowserSource:
+    settings = load_settings().collectr.browser
+    profile = settings.profile_directory or browser_profile_directory()
+    session = CollectrPortfolioCaptureSession(
+        profile,
+        settings.navigation_timeout_seconds,
+        settings.request_delay_seconds,
+        settings.maximum_batches,
+    )
+    return CollectrBrowserSource(session.capture_visible)
+
+
+def _selected_collectr_source(
+    csv_path: Path | None, browser: bool
+) -> CollectrCsvSource | CollectrBrowserSource:
+    if (csv_path is None and not browser) or (csv_path is not None and browser):
+        raise typer.BadParameter("choose exactly one source: --csv PATH or --browser")
+    return _browser_source() if browser else _csv_source(cast(Path, csv_path))
+
+
 @collectr_app.command("validate")
 def validate(
-    csv_path: Annotated[Path, typer.Option("--csv", exists=True, dir_okay=False)],
+    csv_path: Annotated[Path | None, typer.Option("--csv", exists=True, dir_okay=False)] = None,
+    browser: Annotated[bool, typer.Option("--browser")] = False,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    result = _csv_source(csv_path).validate_access()
+    result = _selected_collectr_source(csv_path, browser).validate_access()
     _emit(result.model_dump(), as_json)
     if not result.valid:
         raise typer.Exit(2)
@@ -103,16 +130,21 @@ def import_collection(
     browser: Annotated[bool, typer.Option("--browser")] = False,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    if browser or csv_path is None:
-        raise typer.BadParameter("browser ingestion is scaffolded for Milestone 2; provide --csv")
-    collection = _csv_source(csv_path).load_collection()
+    source = _selected_collectr_source(csv_path, browser)
+    collection = source.load_collection()
+    browser_diagnostics = (
+        source.diagnostics().model_dump(mode="json")
+        if isinstance(source, CollectrBrowserSource)
+        else None
+    )
     _emit(
         {
-            "source_method": "csv",
+            "source_method": "browser" if browser else "csv",
             "completeness": collection.completeness,
             "unique_entries": len(collection.entries),
             "total_quantity": collection.total_quantity,
             "warnings": collection.warnings,
+            "extraction_diagnostics": browser_diagnostics,
         },
         as_json,
     )
@@ -124,15 +156,13 @@ def snapshot(
     browser: Annotated[bool, typer.Option("--browser")] = False,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    if browser or csv_path is None:
-        raise typer.BadParameter("browser ingestion is scaffolded for Milestone 2; provide --csv")
-    item = _csv_source(csv_path).create_snapshot()
+    item = _selected_collectr_source(csv_path, browser).create_snapshot()
     engine = create_database(data_directory() / "card-relay.db")
     SnapshotRepository(engine).add(item)
     _emit(item.model_dump(mode="json"), as_json)
 
 
-def _run_collectr_browser(url: str, action: str) -> None:
+def _run_collectr_browser(url: str, action: str, cdp_url: str | None = None) -> None:
     settings = load_settings().collectr.browser
     profile = settings.profile_directory or browser_profile_directory()
     typer.echo(f"Opening a visible browser at {url}")
@@ -140,6 +170,8 @@ def _run_collectr_browser(url: str, action: str) -> None:
     typer.echo(
         "Authentication remains between you and the site; CardRelay never asks for a password."
     )
+    if cdp_url is not None:
+        typer.echo(f"Attaching only to the loopback Chrome endpoint: {cdp_url}")
     manager = BrowserSessionManager(profile, settings.navigation_timeout_seconds)
     manager.run_visible(
         url,
@@ -148,24 +180,27 @@ def _run_collectr_browser(url: str, action: str) -> None:
             default="",
             show_default=False,
         ),
+        cdp_url,
     )
 
 
 @collectr_app.command("login")
 def collectr_login(
     url: Annotated[str | None, typer.Option("--url")] = None,
+    cdp_url: Annotated[str | None, typer.Option("--cdp-url")] = None,
 ) -> None:
     selected = url or load_settings().collectr.browser.research_url
-    _run_collectr_browser(selected, "login or account discovery")
-    typer.echo("Browser profile saved locally; authentication status remains unverified.")
+    _run_collectr_browser(selected, "login or account discovery", cdp_url)
+    typer.echo("Browser profile saved locally; use session-status to verify portfolio access.")
 
 
 @collectr_app.command("logout")
 def collectr_logout(
     url: Annotated[str | None, typer.Option("--url")] = None,
+    cdp_url: Annotated[str | None, typer.Option("--cdp-url")] = None,
 ) -> None:
     selected = url or load_settings().collectr.browser.research_url
-    _run_collectr_browser(selected, "manual logout")
+    _run_collectr_browser(selected, "manual logout", cdp_url)
     typer.echo("Manual logout flow finished; use clear-session to remove all local browser state.")
 
 
@@ -173,29 +208,45 @@ def collectr_logout(
 def collectr_session_status(
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    _emit(
-        {
-            "profile_present": browser_profile_present(),
-            "authentication_status": "unknown",
-            "reason": "No verified Collectr web authentication contract exists yet.",
-        },
-        as_json,
-    )
+    settings = load_settings().collectr.browser
+    profile = settings.profile_directory or browser_profile_directory()
+    if not browser_profile_present(profile_directory=profile):
+        _emit(
+            {
+                "profile_present": False,
+                "authentication_status": "signed_out",
+                "profile_usable": False,
+                "portfolio_page_reached": False,
+                "reason": "No local Collectr browser profile exists.",
+            },
+            as_json,
+        )
+        return
+    diagnostics = CollectrPortfolioCaptureSession(
+        profile,
+        settings.navigation_timeout_seconds,
+        settings.request_delay_seconds,
+        settings.maximum_batches,
+    ).session_status()
+    _emit({"profile_present": True, **diagnostics.model_dump()}, as_json)
 
 
 @collectr_app.command("clear-session")
 def collectr_clear_session(
     yes: Annotated[bool, typer.Option("--yes")] = False,
 ) -> None:
-    if browser_profile_present() and not yes:
+    settings = load_settings().collectr.browser
+    profile = settings.profile_directory or browser_profile_directory()
+    if browser_profile_present(profile_directory=profile) and not yes:
         typer.confirm("Delete the local Collectr browser profile?", abort=True)
-    clear_browser_profile()
+    clear_browser_profile(profile_directory=profile)
     typer.echo("Local Collectr browser profile removed.")
 
 
 @collectr_app.command("inspect")
 def collectr_inspect(
     url: Annotated[str | None, typer.Option("--url")] = None,
+    cdp_url: Annotated[str | None, typer.Option("--cdp-url")] = None,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     selected = url or load_settings().collectr.browser.research_url
@@ -209,6 +260,7 @@ def collectr_inspect(
             default="",
             show_default=False,
         ),
+        cdp_url,
     )
     _emit(
         {
@@ -218,6 +270,23 @@ def collectr_inspect(
         },
         as_json,
     )
+
+
+@extension_app.command("serve")
+def extension_serve(
+    port: Annotated[int, typer.Option("--port", min=1024, max=65535)] = 8765,
+) -> None:
+    server, token = serve_companion(data_directory() / "card-relay.db", port)
+    typer.echo(f"CardRelay extension companion listening on http://127.0.0.1:{port}")
+    typer.echo("Destination writes: disabled")
+    typer.echo(f"Pairing token: {token}")
+    typer.echo("Keep this terminal open. Press Ctrl+C to stop the companion.")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        typer.echo("CardRelay extension companion stopped.")
+    finally:
+        server.server_close()
 
 
 DEX_WEB_URL = "https://app.dextcg.com/"
@@ -343,12 +412,22 @@ def dex_inspect_schema(
     )
 
 
+def _workflow_source(
+    csv_path: Path | None, browser: bool, source_name: str
+) -> tuple[CollectionSource, str]:
+    if source_name not in {"collectr-csv", "collectr-browser"}:
+        raise typer.BadParameter("--source must be collectr-csv or collectr-browser")
+    use_browser = browser or source_name == "collectr-browser"
+    return _selected_collectr_source(csv_path, use_browser), (
+        "collectr-browser" if use_browser else "collectr-csv"
+    )
+
+
 def _mock_workflow(
-    csv_path: Path, destination: str
-) -> tuple[CanonicalCollection, FileBackedMockDestinationAdapter]:
+    collection: CanonicalCollection, destination: str
+) -> FileBackedMockDestinationAdapter:
     if destination != "mock":
         raise typer.BadParameter("only the mock destination is available in Milestone 1")
-    collection = _csv_source(csv_path).load_collection()
     catalog = [
         DestinationCatalogRecord(
             destination_id=f"mock:{entry.fingerprint.split(':', 1)[1][:16]}",
@@ -356,17 +435,14 @@ def _mock_workflow(
         )
         for entry in collection.entries
     ]
-    return collection, FileBackedMockDestinationAdapter(
-        catalog, data_directory() / "mock" / "collection.json"
-    )
+    return FileBackedMockDestinationAdapter(catalog, data_directory() / "mock" / "collection.json")
 
 
 def _create_plan(
-    csv_path: Path, source: str, destination: str, policy: SyncPolicy | None = None
+    source: CollectionSource, destination: str, policy: SyncPolicy | None = None
 ) -> tuple[SyncPlan, FileBackedMockDestinationAdapter, SourceSnapshot]:
-    if source != "collectr-csv":
-        raise typer.BadParameter("Milestone 1 supports --source collectr-csv")
-    collection, adapter = _mock_workflow(csv_path, destination)
+    collection = source.load_collection()
+    adapter = _mock_workflow(collection, destination)
     mappings = MappingRepository(create_database(data_directory() / "card-relay.db"))
     matches = match_collection(
         collection,
@@ -375,7 +451,7 @@ def _create_plan(
         mappings.list_rejected(destination),
     )
     effective_policy = policy or SyncPolicy()
-    current_snapshot = _csv_source(csv_path).create_snapshot()
+    current_snapshot = source.create_snapshot()
     repository = SnapshotRepository(create_database(data_directory() / "card-relay.db"))
     assessment = assess_source_snapshot(
         current_snapshot, repository.latest_trusted(), effective_policy
@@ -416,14 +492,15 @@ def _plan_summary(item: SyncPlan, plan_id: int | None = None) -> dict[str, objec
 
 @app.command()
 def match(
-    csv_path: Annotated[Path, typer.Option("--csv", exists=True, dir_okay=False)],
+    csv_path: Annotated[Path | None, typer.Option("--csv", exists=True, dir_okay=False)] = None,
+    browser: Annotated[bool, typer.Option("--browser")] = False,
     source: Annotated[str, typer.Option("--source")] = "collectr-csv",
     destination: Annotated[str, typer.Option("--destination")] = "mock",
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    if source != "collectr-csv":
-        raise typer.BadParameter("Milestone 1 supports --source collectr-csv")
-    collection, adapter = _mock_workflow(csv_path, destination)
+    selected_source, source_name = _workflow_source(csv_path, browser, source)
+    collection = selected_source.load_collection()
+    adapter = _mock_workflow(collection, destination)
     mappings = MappingRepository(create_database(data_directory() / "card-relay.db"))
     results = match_collection(
         collection,
@@ -434,12 +511,13 @@ def match(
     counts = {status.value: 0 for status in MatchStatus}
     for result in results:
         counts[result.status.value] += 1
-    _emit({"source": source, "destination": destination, "matches": counts}, as_json)
+    _emit({"source": source_name, "destination": destination, "matches": counts}, as_json)
 
 
 @app.command()
 def plan(
-    csv_path: Annotated[Path, typer.Option("--csv", exists=True, dir_okay=False)],
+    csv_path: Annotated[Path | None, typer.Option("--csv", exists=True, dir_okay=False)] = None,
+    browser: Annotated[bool, typer.Option("--browser")] = False,
     source: Annotated[str, typer.Option("--source")] = "collectr-csv",
     destination: Annotated[str, typer.Option("--destination")] = "mock",
     allow_quantity_decreases: Annotated[bool, typer.Option("--allow-quantity-decreases")] = False,
@@ -454,7 +532,8 @@ def plan(
         maximum_removal_count=maximum_removal_count,
         maximum_removal_percent=maximum_removal_percent,
     )
-    item, _, _ = _create_plan(csv_path, source, destination, policy)
+    selected_source, _ = _workflow_source(csv_path, browser, source)
+    item, _, _ = _create_plan(selected_source, destination, policy)
     audit = SyncAuditRepository(create_database(data_directory() / "card-relay.db"))
     plan_id = audit.add_plan(item)
     _emit(_plan_summary(item, plan_id), as_json)
@@ -462,7 +541,8 @@ def plan(
 
 @app.command()
 def sync(
-    csv_path: Annotated[Path, typer.Option("--csv", exists=True, dir_okay=False)],
+    csv_path: Annotated[Path | None, typer.Option("--csv", exists=True, dir_okay=False)] = None,
+    browser: Annotated[bool, typer.Option("--browser")] = False,
     source: Annotated[str, typer.Option("--source")] = "collectr-csv",
     destination: Annotated[str, typer.Option("--destination")] = "mock",
     dry_run: Annotated[bool, typer.Option("--dry-run/--apply")] = True,
@@ -483,7 +563,8 @@ def sync(
         maximum_removal_count=maximum_removal_count,
         maximum_removal_percent=maximum_removal_percent,
     )
-    item, adapter, current_snapshot = _create_plan(csv_path, source, destination, policy)
+    selected_source, _ = _workflow_source(csv_path, browser, source)
+    item, adapter, current_snapshot = _create_plan(selected_source, destination, policy)
     audit = SyncAuditRepository(create_database(data_directory() / "card-relay.db"))
     plan_id = audit.add_plan(item)
     summary = _plan_summary(item, plan_id)

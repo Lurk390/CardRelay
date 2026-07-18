@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "CardRelay Collectr Bridge",
+  "version": "0.1.0",
+  "description": "Preview a Collectr portfolio in the local CardRelay companion.",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": [
+    "https://app.getcollectr.com/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "CardRelay",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://app.getcollectr.com/*"],
+      "js": ["page-observer.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://app.getcollectr.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

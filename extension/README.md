@@ -1,0 +1,44 @@
+# CardRelay Collectr Bridge
+
+This unpacked Manifest V3 extension captures a Collectr portfolio from the user's normal authenticated Chrome tab and sends it only to CardRelay's loopback companion. It does not read passwords, cookies, authorization headers, or unrelated pages. Destination writes are disabled.
+
+## Load and run locally
+
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Select **Load unpacked** and choose this `extension` directory.
+4. Start the companion from the repository:
+
+   ```powershell
+   .\.venv\Scripts\card-relay.exe extension serve
+   ```
+
+5. Copy the displayed pairing token into the extension popup and save it. The default port is `8765`.
+6. Open the Collectr portfolio overview in the active tab and select **Start portfolio capture**.
+7. The extension opens the Products view and scrolls while Collectr loads batches. Reopen the popup to inspect progress and send the preview.
+
+After editing extension files, use **Reload** on the extension card at `chrome://extensions` and reload open Collectr tabs. A content-script-unavailable message almost always means the Collectr tab predates the latest extension load.
+
+The pairing token is ephemeral: restarting the companion produces a new token. Private product response bodies remain in the tab until submission and are not written to extension storage. Bounded condition and grading lookup responses are kept in session storage so navigation cannot discard the metadata needed for safe normalization; Chrome clears that state with the browser session. The companion validates captures with CardRelay's existing Collectr parser and stores only the source snapshot metadata already used by the CLI.
+
+## Expected preview
+
+The popup reports page progress while the Products view scrolls. When capture is idle, select **Send preview to CardRelay**. A successful response includes the snapshot ID, unique entries, quantity, and completeness. `complete` requires the visible Cards quantity to match the normalized response total and requires contiguous 30-record pages ending in an empty terminal page. An `incomplete` preview cannot imply that an omitted card was removed.
+
+If Collectr does not request its condition or grading lookup during the capture, CardRelay keeps otherwise valid ungraded rows with an unknown condition and counts them as lossy. Graded rows without a recognized grading lookup are omitted rather than guessed. The resulting preview is intentionally incomplete and cannot authorize destructive planning.
+
+## Troubleshooting
+
+- **Pairing required:** copy the current token from the running companion and save it again.
+- **Companion unavailable:** keep `extension serve` running and verify the port.
+- **Capture not ready:** restart from Collectr's portfolio overview; aggregate and conflicting pages are rejected.
+- **Terminal page missing:** wait for scrolling to become idle, then refresh the popup status.
+- **Invalid or rejected capture:** reload Collectr and start a fresh capture. CardRelay deliberately fails closed rather than guessing through a changed schema.
+
+## Current limits
+
+- The extension is an unpacked development build; it is not packaged or published.
+- Capture and preview are manual. Periodic checks and notifications are not implemented.
+- A complete capture requires contiguous 30-record pages, the empty terminal page, exact/unstacked records, recognized condition and grading metadata, and a visible-total match.
+- Browser snapshots can never authorize decreases or removals at this stage.
+- The popup cannot write to Dex or any other destination.

@@ -17,9 +17,12 @@ def assess_source_snapshot(
     policy: SyncPolicy,
 ) -> SourceSafetyAssessment:
     warnings = list(current.warnings)
-    allowed = current.completeness is ExtractionCompleteness.COMPLETE
-    if not allowed:
+    complete = current.completeness is ExtractionCompleteness.COMPLETE
+    allowed = complete and current.trusted_for_destructive_planning
+    if not complete:
         warnings.append("source extraction is not complete")
+    elif not current.trusted_for_destructive_planning:
+        warnings.append("source extraction is not approved for destructive planning")
     if previous is None or previous.total_quantity == 0:
         return SourceSafetyAssessment(
             destructive_planning_allowed=allowed,

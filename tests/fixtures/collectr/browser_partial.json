@@ -1,0 +1,26 @@
+{
+  "contract_version": "collectr-browser-v1",
+  "strategy": "dom",
+  "visible_total_quantity": 4,
+  "visible_unique_record_count": 3,
+  "expected_batch_count": 2,
+  "batches": [
+    {
+      "batch_number": 1,
+      "final_batch": false,
+      "records": [
+        {
+          "source_record_id": "fictional-holding-1",
+          "game": "Pokemon",
+          "card_name": "Fixturemon",
+          "set_name": "Fixture Set",
+          "collector_number": "001",
+          "quantity": 2,
+          "condition": "Near Mint",
+          "rarity": "Rare",
+          "finish": "Holofoil"
+        }
+      ]
+    }
+  ]
+}

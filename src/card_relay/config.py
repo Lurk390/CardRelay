@@ -25,8 +25,9 @@ class BrowserConfig(BaseModel):
     profile_directory: Path | None = None
     navigation_timeout_seconds: int = Field(default=30, gt=0)
     request_delay_seconds: float = Field(default=1, ge=0)
+    maximum_batches: int = Field(default=200, ge=1, le=500)
     require_complete_extraction: bool = True
-    research_url: str = "https://www.getcollectr.com/"
+    research_url: str = "https://app.getcollectr.com/portfolio"
 
 
 class CollectrConfig(BaseModel):

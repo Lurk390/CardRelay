@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CardRelay</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <header>
+      <h1>CardRelay</h1>
+      <p>Collectr preview bridge</p>
+    </header>
+    <main>
+      <section>
+        <label for="port">Companion port</label>
+        <input id="port" type="number" min="1024" max="65535" value="8765">
+        <label for="token">Pairing token</label>
+        <input id="token" type="password" autocomplete="off" spellcheck="false">
+        <button id="save" class="secondary">Save pairing</button>
+      </section>
+      <section>
+        <div id="status" role="status">Open your Collectr portfolio to begin.</div>
+        <button id="start">Start portfolio capture</button>
+        <button id="refresh" class="secondary">Refresh status</button>
+        <button id="send" disabled>Send preview to CardRelay</button>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

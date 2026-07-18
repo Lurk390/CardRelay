@@ -28,17 +28,17 @@ class ParseDiagnostics:
     warnings: list[str]
 
 
-def _header_key(value: str) -> str:
+def normalized_label(value: str) -> str:
     return " ".join(value.strip().casefold().replace("_", " ").split())
 
 
 def _map_headers(headers: Sequence[str], aliases: dict[str, list[str]]) -> dict[str, str]:
-    actual = {_header_key(header): header for header in headers}
+    actual = {normalized_label(header): header for header in headers}
     result: dict[str, str] = {}
     for canonical, candidates in aliases.items():
         for candidate in [canonical, *candidates]:
-            if _header_key(candidate) in actual:
-                result[canonical] = actual[_header_key(candidate)]
+            if normalized_label(candidate) in actual:
+                result[canonical] = actual[normalized_label(candidate)]
                 break
     missing = [name for name in ("card_name", "collector_number", "quantity") if name not in result]
     if missing or ("set_name" not in result and "set_code" not in result):
@@ -48,8 +48,8 @@ def _map_headers(headers: Sequence[str], aliases: dict[str, list[str]]) -> dict[
     return result
 
 
-def _finish(value: str) -> Finish:
-    normalized = _header_key(value)
+def parse_finish(value: str) -> Finish:
+    normalized = normalized_label(value)
     known = {
         "normal": Finish.NORMAL,
         "foil": Finish.FOIL,
@@ -74,12 +74,12 @@ def _row_value(row: dict[str, str | None], mapped: dict[str, str], key: str) -> 
     return (row.get(mapped[key], "") or "").strip() if key in mapped else ""
 
 
-def _boolean(value: str) -> bool:
-    return _header_key(value) in {"yes", "true", "1"}
+def parse_boolean(value: str) -> bool:
+    return normalized_label(value) in {"yes", "true", "1"}
 
 
-def _edition(value: str) -> Edition:
-    normalized = _header_key(value)
+def parse_edition(value: str) -> Edition:
+    normalized = normalized_label(value)
     if "first" in normalized or normalized == "1st edition":
         return Edition.FIRST
     if normalized == "limited":
@@ -89,8 +89,8 @@ def _edition(value: str) -> Edition:
     return Edition.UNKNOWN
 
 
-def _grading(value: str, grader: str) -> tuple[str, str | None, Decimal | None]:
-    normalized = _header_key(value)
+def parse_grading(value: str, grader: str) -> tuple[str, str | None, Decimal | None]:
+    normalized = normalized_label(value)
     if not value or normalized in {"raw", "ungraded"}:
         if grader:
             raise ValueError("grading company requires a numeric grade")
@@ -136,7 +136,7 @@ def parse_csv(
             raise SourceValidationError("CSV has no header row")
         mapped = _map_headers(headers, aliases)
         schema = hashlib.sha256(
-            "|".join(sorted(_header_key(h) for h in headers)).encode()
+            "|".join(sorted(normalized_label(h) for h in headers)).encode()
         ).hexdigest()
         aggregated: dict[str, CanonicalCollectionEntry] = {}
         duplicates = 0
@@ -151,7 +151,7 @@ def parse_csv(
 
             value = partial(_row_value, row, mapped)
 
-            if not value("quantity") and _boolean(value("watchlist")):
+            if not value("quantity") and parse_boolean(value("watchlist")):
                 skipped_watchlist_rows += 1
                 continue
             if not value("collector_number"):
@@ -160,7 +160,7 @@ def parse_csv(
                     f"row {row_number} skipped: collector number is missing; source is incomplete"
                 )
                 continue
-            finish = _finish(value("finish"))
+            finish = parse_finish(value("finish"))
             if finish is Finish.APPLICATION_SPECIFIC:
                 invalid_records += 1
                 warnings.append(
@@ -173,7 +173,7 @@ def parse_csv(
                 if quantity <= 0:
                     raise ValueError("quantity must be greater than zero")
                 grader = value("grading_company") or None
-                grading_status, grading_company, grade = _grading(value("grade"), grader or "")
+                grading_status, grading_company, grade = parse_grading(value("grade"), grader or "")
                 identity = CanonicalCardIdentity(
                     game=value("game") or "pokemon",
                     card_name=value("card_name"),
@@ -185,15 +185,15 @@ def parse_csv(
                     ),
                     language=value("language") or "unknown",
                     finish=finish,
-                    edition=_edition(value("edition") or value("finish")),
+                    edition=parse_edition(value("edition") or value("finish")),
                     grading_status=grading_status,
                     grading_company=grading_company,
                     grade=grade,
                     certification_number=value("certification_number") or None,
-                    promo=_boolean(value("promo"))
-                    or _header_key(value("finish")) in {"promo", "promotional"},
-                    signed=_boolean(value("signed")),
-                    altered=_boolean(value("altered")),
+                    promo=parse_boolean(value("promo"))
+                    or normalized_label(value("finish")) in {"promo", "promotional"},
+                    signed=parse_boolean(value("signed")),
+                    altered=parse_boolean(value("altered")),
                 )
                 entry = CanonicalCollectionEntry(
                     identity=identity,

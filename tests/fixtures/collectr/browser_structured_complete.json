@@ -1,0 +1,62 @@
+{
+  "contract_version": "collectr-browser-v1",
+  "strategy": "structured_response",
+  "visible_total_quantity": 4,
+  "visible_unique_record_count": 3,
+  "expected_batch_count": 2,
+  "batches": [
+    {
+      "batch_number": 1,
+      "final_batch": false,
+      "records": [
+        {
+          "source_record_id": "fictional-holding-1",
+          "game": "Pokemon",
+          "card_name": "Fixturemon",
+          "set_name": "Fixture Set",
+          "collector_number": "001",
+          "quantity": 2,
+          "condition": "Near Mint",
+          "rarity": "Rare",
+          "finish": "Holofoil"
+        },
+        {
+          "source_record_id": "fictional-holding-2",
+          "game": "Magic: The Gathering",
+          "card_name": "Fixture Spell",
+          "set_name": "Fixture Expansion",
+          "collector_number": "7",
+          "quantity": 1,
+          "condition": "Near Mint",
+          "rarity": "Common",
+          "finish": "Foil"
+        }
+      ]
+    },
+    {
+      "batch_number": 2,
+      "final_batch": true,
+      "records": [
+        {
+          "source_record_id": "fictional-holding-3",
+          "game": "Pokemon",
+          "card_name": "Graded Fixturemon",
+          "set_name": "Fixture Set",
+          "collector_number": "009",
+          "quantity": 1,
+          "rarity": "Ultra Rare",
+          "finish": "Normal",
+          "grade": "CGC 10.0 Pristine"
+        },
+        {
+          "source_record_id": "fictional-watchlist-1",
+          "game": "Pokemon",
+          "card_name": "Watched Fixturemon",
+          "set_name": "Fixture Set",
+          "collector_number": "010",
+          "watchlist": true
+        }
+      ]
+    }
+  ]
+}

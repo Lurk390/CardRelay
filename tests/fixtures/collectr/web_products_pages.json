@@ -1,0 +1,66 @@
+[
+  {
+    "data": [
+      {
+        "product_id": 101,
+        "user_owned_product_id": "fictional-holding-1",
+        "product_name": "Fixturemon",
+        "catalog_category_name": "Pokemon",
+        "catalog_group": "Fixture Set",
+        "card_number": "001/100",
+        "product_sub_type": "Holofoil",
+        "card_condition": 1,
+        "quantity": "2",
+        "grade_id": 52,
+        "rarity": "Rare",
+        "language": null,
+        "is_card": true,
+        "watchlist": false
+      },
+      {
+        "product_id": 102,
+        "user_owned_product_id": "fictional-holding-2",
+        "product_name": "Fixture Spell",
+        "catalog_category_name": "Magic: The Gathering",
+        "catalog_group": "Fixture Expansion",
+        "card_number": "7",
+        "product_sub_type": "Foil",
+        "card_condition": 1,
+        "quantity": 1,
+        "grade_id": "52",
+        "rarity": "Common",
+        "is_card": true
+      },
+      {
+        "product_id": 999,
+        "product_name": "Fictional Sealed Box",
+        "catalog_category_name": "Pokemon",
+        "catalog_group": "Fixture Set",
+        "card_number": "sealed",
+        "quantity": 1,
+        "is_card": false
+      }
+    ]
+  },
+  {
+    "data": [
+      {
+        "product_id": 103,
+        "user_owned_product_id": "fictional-holding-3",
+        "product_name": "Graded Fixturemon",
+        "catalog_category_name": "Pokemon",
+        "catalog_group": "Fixture Set",
+        "card_number": "009",
+        "product_sub_type": "Normal",
+        "card_condition": null,
+        "quantity": 1,
+        "grade_id": 10,
+        "rarity": "Ultra Rare",
+        "is_card": true
+      }
+    ]
+  },
+  {
+    "data": []
+  }
+]
