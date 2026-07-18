@@ -16,3 +16,7 @@ browser-profile/
 storage-state.json
 playwright-report/
 
+# Private local Collectr portfolio exports. Sanitized fixtures belong under tests/fixtures.
+/collectr_portfolio*.csv
+/collectr_portolio*.csv
+

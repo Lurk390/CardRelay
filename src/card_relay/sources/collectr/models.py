@@ -5,14 +5,15 @@ from pydantic import BaseModel, Field
 from card_relay.domain.enums import CollectrSourceMode
 
 DEFAULT_COLUMN_ALIASES: dict[str, list[str]] = {
-    "card_name": ["card", "card name", "name"],
+    "game": ["game", "category"],
+    "card_name": ["card", "card name", "name", "product name"],
     "set_name": ["set", "set name", "expansion"],
     "set_code": ["set code", "set id"],
     "collector_number": ["number", "card number", "collector number"],
     "quantity": ["quantity", "qty", "count"],
     "condition": ["condition", "card condition"],
     "language": ["language", "lang"],
-    "finish": ["finish", "variant", "printing"],
+    "finish": ["finish", "variant", "variance", "printing"],
     "edition": ["edition"],
     "grading_company": ["grading company", "grader"],
     "grade": ["grade"],
@@ -24,6 +25,7 @@ DEFAULT_COLUMN_ALIASES: dict[str, list[str]] = {
     "altered": ["altered", "modified"],
     "notes": ["notes", "note"],
     "source_record_id": ["record id", "collectr id"],
+    "watchlist": ["watchlist"],
 }
 
 

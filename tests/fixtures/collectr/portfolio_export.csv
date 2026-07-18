@@ -1,0 +1,5 @@
+Portfolio Name,Category,Set,Product Name,Card Number,Rarity,Variance,Grade,Card Condition,Average Cost Paid,Quantity,Market Price (As of 2000-01-01),Price Override,Watchlist,Date Added,Notes
+Fixture Portfolio,Pokemon,Fixture Set,Fixturemon,001,Rare,Holofoil,Ungraded,Near Mint,0.00,2,1.00,,false,2000-01-01,
+Fixture Portfolio,Magic: The Gathering,Fixture Expansion,Fixture Spell,7,Common,Foil,Ungraded,Near Mint,0.00,1,0.50,,false,2000-01-01,
+Fixture Portfolio,Pokemon,Fixture Set,Graded Fixturemon,009,Ultra Rare,Normal,CGC 10.0 Pristine,,0.00,1,5.00,,false,2000-01-01,
+Fixture Portfolio,Pokemon,Fixture Set,Watched Fixturemon,010,Common,Normal,,,0.00,,0.25,,true,2000-01-01,

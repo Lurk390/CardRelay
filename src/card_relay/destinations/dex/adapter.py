@@ -8,7 +8,11 @@ class DexAdapter:
     destination_name = "dex"
 
     def get_capabilities(self) -> DestinationCapabilities:
-        return DestinationCapabilities(catalog_retrieval=False, collection_retrieval=False)
+        return DestinationCapabilities(
+            supported_games=frozenset({"pokemon"}),
+            catalog_retrieval=False,
+            collection_retrieval=False,
+        )
 
     def fetch_catalog(self):  # type: ignore[no-untyped-def]
         raise IntegrationUnavailableError("Dex catalog behavior has not been researched")

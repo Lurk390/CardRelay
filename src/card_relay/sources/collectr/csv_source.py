@@ -44,11 +44,14 @@ class CollectrCsvSource:
             source_schema_fingerprint=diagnostics.schema_fingerprint,
             parser_name="collectr_csv",
             parser_version=PARSER_VERSION,
-            completeness=ExtractionCompleteness.COMPLETE,
+            completeness=collection.completeness,
             total_unique_entries=len(collection.entries),
             total_quantity=collection.total_quantity,
+            invalid_record_count=diagnostics.invalid_record_count,
             duplicate_record_count=diagnostics.duplicate_count,
             warnings=diagnostics.warnings,
             collection_fingerprint=collection_fingerprint(collection),
-            trusted_for_destructive_planning=True,
+            trusted_for_destructive_planning=(
+                collection.completeness is ExtractionCompleteness.COMPLETE
+            ),
         )

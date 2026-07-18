@@ -24,6 +24,17 @@ def build_plan(
     )
     for match in sorted(matches, key=lambda item: item.source_fingerprint):
         desired = entries[match.source_fingerprint]
+        if not capabilities.supports_game(desired.identity.game):
+            operations.append(
+                SyncOperation(
+                    operation_type=OperationType.UNSUPPORTED,
+                    fingerprint=desired.fingerprint,
+                    current_quantity=0,
+                    desired_quantity=desired.quantity,
+                    reason=(f"{destination_name} does not support game: {desired.identity.game}"),
+                )
+            )
+            continue
         if match.status is not MatchStatus.EXACT or match.candidate is None:
             operations.append(
                 SyncOperation(
@@ -78,8 +89,15 @@ def build_plan(
                 reason=reason,
             )
         )
-    removal_candidates = [entry for key, entry in actual.items() if key not in matched_ids]
-    removal_percent = (len(removal_candidates) / len(actual) * 100) if actual else 0
+    supported_actual = [
+        entry for entry in actual.values() if capabilities.supports_game(entry.identity.game)
+    ]
+    removal_candidates = [
+        entry for entry in supported_actual if entry.destination_id not in matched_ids
+    ]
+    removal_percent = (
+        len(removal_candidates) / len(supported_actual) * 100 if supported_actual else 0
+    )
     removal_threshold_ok = (
         len(removal_candidates) <= policy.maximum_removal_count
         and removal_percent <= policy.maximum_removal_percent

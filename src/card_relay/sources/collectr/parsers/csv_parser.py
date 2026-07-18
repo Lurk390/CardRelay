@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -8,7 +9,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from card_relay.domain.enums import Edition, Finish, IngestionMethod
+from card_relay.domain.enums import Edition, ExtractionCompleteness, Finish, IngestionMethod
 from card_relay.domain.models import (
     CanonicalCardIdentity,
     CanonicalCollection,
@@ -16,13 +17,14 @@ from card_relay.domain.models import (
 )
 from card_relay.exceptions import SourceValidationError
 
-PARSER_VERSION = "1.0"
+PARSER_VERSION = "1.1"
 
 
 @dataclass(frozen=True)
 class ParseDiagnostics:
     schema_fingerprint: str
     duplicate_count: int
+    invalid_record_count: int
     warnings: list[str]
 
 
@@ -50,16 +52,20 @@ def _finish(value: str) -> Finish:
     normalized = _header_key(value)
     known = {
         "normal": Finish.NORMAL,
+        "foil": Finish.FOIL,
         "holo": Finish.HOLO,
         "holofoil": Finish.HOLO,
         "reverse holo": Finish.REVERSE_HOLO,
         "reverse holofoil": Finish.REVERSE_HOLO,
+        "master ball reverse holo": Finish.MASTER_BALL_REVERSE_HOLO,
         "cracked ice": Finish.CRACKED_ICE,
         "cosmos holo": Finish.COSMOS_HOLO,
         "stamped": Finish.STAMPED,
         "promo": Finish.PROMO,
         "first edition": Finish.NORMAL,
+        "1st edition": Finish.NORMAL,
         "unlimited": Finish.NORMAL,
+        "limited": Finish.NORMAL,
     }
     return known.get(normalized, Finish.UNKNOWN if not normalized else Finish.APPLICATION_SPECIFIC)
 
@@ -70,6 +76,46 @@ def _row_value(row: dict[str, str | None], mapped: dict[str, str], key: str) -> 
 
 def _boolean(value: str) -> bool:
     return _header_key(value) in {"yes", "true", "1"}
+
+
+def _edition(value: str) -> Edition:
+    normalized = _header_key(value)
+    if "first" in normalized or normalized == "1st edition":
+        return Edition.FIRST
+    if normalized == "limited":
+        return Edition.LIMITED
+    if normalized == "unlimited":
+        return Edition.UNLIMITED
+    return Edition.UNKNOWN
+
+
+def _grading(value: str, grader: str) -> tuple[str, str | None, Decimal | None]:
+    normalized = _header_key(value)
+    if not value or normalized in {"raw", "ungraded"}:
+        if grader:
+            raise ValueError("grading company requires a numeric grade")
+        return "ungraded", None, None
+    if grader:
+        try:
+            return "graded", grader, Decimal(value)
+        except ArithmeticError as error:
+            raise ValueError("grade must be numeric when grading company is separate") from error
+    combined = re.fullmatch(
+        r"(?P<company>[A-Za-z][A-Za-z0-9 .&+-]*?)\s+"
+        r"(?P<grade>\d+(?:\.\d+)?)(?:\s+.*)?",
+        value,
+    )
+    if combined is None:
+        raise ValueError("grade must identify a grading company and numeric grade")
+    return "graded", combined.group("company"), Decimal(combined.group("grade"))
+
+
+def _validation_summary(error: ValidationError) -> str:
+    parts: list[str] = []
+    for detail in error.errors(include_url=False, include_input=False):
+        location = ".".join(str(item) for item in detail["loc"])
+        parts.append(f"{location}: {detail['msg']}")
+    return "; ".join(parts)
 
 
 def parse_csv(
@@ -94,6 +140,9 @@ def parse_csv(
         ).hexdigest()
         aggregated: dict[str, CanonicalCollectionEntry] = {}
         duplicates = 0
+        invalid_records = 0
+        lossy_records = 0
+        skipped_watchlist_rows = 0
         warnings: list[str] = []
         errors: list[str] = []
         for row_number, row in enumerate(rows, start=2):
@@ -102,20 +151,31 @@ def parse_csv(
 
             value = partial(_row_value, row, mapped)
 
+            if not value("quantity") and _boolean(value("watchlist")):
+                skipped_watchlist_rows += 1
+                continue
+            if not value("collector_number"):
+                invalid_records += 1
+                warnings.append(
+                    f"row {row_number} skipped: collector number is missing; source is incomplete"
+                )
+                continue
+            finish = _finish(value("finish"))
+            if finish is Finish.APPLICATION_SPECIFIC:
+                invalid_records += 1
+                warnings.append(
+                    f"row {row_number} skipped: finish is unsupported; source is incomplete"
+                )
+                continue
+
             try:
                 quantity = int(value("quantity"))
                 if quantity <= 0:
                     raise ValueError("quantity must be greater than zero")
-                edition_value = _header_key(value("edition") or value("finish"))
-                edition = (
-                    Edition.FIRST
-                    if "first" in edition_value
-                    else Edition.UNLIMITED
-                    if edition_value == "unlimited"
-                    else Edition.UNKNOWN
-                )
                 grader = value("grading_company") or None
+                grading_status, grading_company, grade = _grading(value("grade"), grader or "")
                 identity = CanonicalCardIdentity(
+                    game=value("game") or "pokemon",
                     card_name=value("card_name"),
                     set_name=value("set_name") or None,
                     set_code=value("set_code") or None,
@@ -124,11 +184,11 @@ def parse_csv(
                         int(value("printed_set_total")) if value("printed_set_total") else None
                     ),
                     language=value("language") or "unknown",
-                    finish=_finish(value("finish")),
-                    edition=edition,
-                    grading_status="graded" if grader else "ungraded",
-                    grading_company=grader,
-                    grade=Decimal(value("grade")) if value("grade") else None,
+                    finish=finish,
+                    edition=_edition(value("edition") or value("finish")),
+                    grading_status=grading_status,
+                    grading_company=grading_company,
+                    grade=grade,
                     certification_number=value("certification_number") or None,
                     promo=_boolean(value("promo"))
                     or _header_key(value("finish")) in {"promo", "promotional"},
@@ -144,28 +204,34 @@ def parse_csv(
                     source_record_id=value("source_record_id") or None,
                     ingestion_method=IngestionMethod.CSV,
                     raw_provenance={key: mapped[key] for key in mapped},
-                    warnings=[f"unrecognized finish: {value('finish')}"]
-                    if identity.finish is Finish.APPLICATION_SPECIFIC
-                    else [],
                 )
-            except (ValueError, ValidationError) as error:
+            except ValidationError as error:
+                errors.append(f"row {row_number}: {_validation_summary(error)}")
+                continue
+            except ValueError as error:
                 errors.append(f"row {row_number}: {error}")
                 continue
             if entry.fingerprint in aggregated:
                 previous = aggregated[entry.fingerprint]
-                if (
+                conditions_conflict = (
                     previous.condition is not None
                     and entry.condition is not None
                     and previous.condition != entry.condition
-                ):
-                    errors.append(
-                        f"row {row_number}: duplicate identity has conflicting conditions"
+                )
+                if conditions_conflict:
+                    lossy_records += 1
+                    warnings.append(
+                        f"row {row_number}: combined duplicate identity with multiple "
+                        "conditions; condition recorded as mixed and source is incomplete"
                     )
-                    continue
                 aggregated[entry.fingerprint] = previous.model_copy(
                     update={
                         "quantity": previous.quantity + entry.quantity,
-                        "condition": previous.condition or entry.condition,
+                        "condition": (
+                            "mixed"
+                            if previous.condition == "mixed" or conditions_conflict
+                            else previous.condition or entry.condition
+                        ),
                     }
                 )
                 duplicates += 1
@@ -175,6 +241,14 @@ def parse_csv(
             raise SourceValidationError("; ".join(errors))
     if duplicates:
         warnings.append(f"aggregated {duplicates} duplicate row(s)")
+    if skipped_watchlist_rows:
+        warnings.append(f"skipped {skipped_watchlist_rows} watchlist-only row(s) without quantity")
     return CanonicalCollection(
-        entries=list(aggregated.values()), warnings=warnings
-    ), ParseDiagnostics(schema, duplicates, warnings)
+        entries=list(aggregated.values()),
+        completeness=(
+            ExtractionCompleteness.INCOMPLETE
+            if invalid_records or lossy_records
+            else ExtractionCompleteness.COMPLETE
+        ),
+        warnings=warnings,
+    ), ParseDiagnostics(schema, duplicates, invalid_records, warnings)

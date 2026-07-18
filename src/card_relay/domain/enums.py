@@ -14,8 +14,10 @@ class IngestionMethod(StrEnum):
 
 class Finish(StrEnum):
     NORMAL = "normal"
+    FOIL = "foil"
     HOLO = "holo"
     REVERSE_HOLO = "reverse_holo"
+    MASTER_BALL_REVERSE_HOLO = "master_ball_reverse_holo"
     CRACKED_ICE = "cracked_ice"
     COSMOS_HOLO = "cosmos_holo"
     STAMPED = "stamped"
@@ -26,6 +28,7 @@ class Finish(StrEnum):
 
 class Edition(StrEnum):
     FIRST = "first_edition"
+    LIMITED = "limited"
     UNLIMITED = "unlimited"
     UNKNOWN = "unknown"
 

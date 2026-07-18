@@ -2,13 +2,15 @@
 
 > Sync your trading card collection from one source of truth to every app.
 
-CardRelay is an early open-source Pokémon collection synchronization engine. Collectr is the authoritative collection; destinations are reconciled toward it through previewable plans. Collectr Pro CSV is the preferred optimized path when available, but it is **not required**: a user-controlled browser ingestion path for free users is scaffolded for Milestone 2.
+CardRelay is an early open-source trading-card collection synchronization engine. Collectr is the authoritative collection; destinations are reconciled toward it through previewable plans. A Collectr Pro CSV can provide a fast one-time baseline, but it is **not required**: a user-controlled browser ingestion path for free users is scaffolded for Milestone 2 and will support both initial and ongoing synchronization.
 
 ## Current status
 
-Milestone 1 provides canonical models, configurable CSV ingestion, exact variant-sensitive matching, safe planning, a mock destination, SQLite snapshots/mappings, and a CLI. Collectr browser and Dex integrations are experimental scaffolds and perform no live calls.
+Milestone 1 is complete: it provides canonical models, configurable CSV ingestion, exact variant-sensitive matching, safe planning, a mock destination, SQLite snapshots/mappings, a CLI, fail-closed browser fixture boundaries, CI, and documentation. Collectr browser and Dex integrations remain experimental scaffolds and perform no undocumented live calls.
 
 Safety defaults matter: every sync is a dry run, writes require explicit application action, ambiguous records are never applied, and decreases/removals remain blocked unless separately enabled with thresholds. Incomplete sources cannot authorize destructive operations.
+
+An ongoing browser observation may contain only part of a portfolio. CardRelay may plan safe additions or quantity increases for cards actually observed, but absence from a partial observation never means zero and cannot authorize a decrease or removal. Only a separately validated complete snapshot can be considered for destructive reconciliation.
 
 ## Install and use
 

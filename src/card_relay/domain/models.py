@@ -24,7 +24,7 @@ class CanonicalCardIdentity(BaseModel):
     card_name: str
     set_name: str | None = None
     set_code: str | None = None
-    collector_number: str
+    collector_number: str = Field(min_length=1)
     printed_set_total: int | None = None
     language: str = "unknown"
     finish: Finish = Finish.UNKNOWN

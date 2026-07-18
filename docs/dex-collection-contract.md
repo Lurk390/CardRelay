@@ -27,7 +27,11 @@ artist, rarity and regulation references, images, markets, and related catalog m
   unverified.
 - Nested `market`, `region`, and `variant` object fields were beyond the bounded schema depth and
   remain empty in the fictional fixture rather than being invented.
-- No response validation model or parser exists yet.
+- A provisional read-only transport model validates the observed page envelope, collection entry,
+  identity-bearing card and set fields, variant types, timestamps, and non-negative integer finish
+  quantities. It rejects unexpected page and entry fields while allowing additional nested catalog
+  metadata because the schema inspection was depth-bounded.
+- The transport model does not yet convert responses into canonical destination records.
 - No Dex write contract is known or enabled.
 
 These fixtures are research contracts only. They must not authorize destructive planning or
