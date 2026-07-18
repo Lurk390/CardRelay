@@ -1,0 +1,84 @@
+{
+  "page": 1,
+  "pageSize": 20,
+  "result": [
+    {
+      "card": {
+        "artist": {
+          "id": "fixture-artist-1",
+          "name": "Example Artist"
+        },
+        "artistId": "fixture-artist-1",
+        "avgPrice": "1.25",
+        "cardId": "fixture-card-1",
+        "createdAt": "2000-01-01T00:00:00Z",
+        "energySubtype": null,
+        "id": "fixture-card-record-1",
+        "imageUrl": "https://example.invalid/card.png",
+        "markets": [
+          {
+            "market": {},
+            "price": 1.25,
+            "url": "https://example.invalid/market",
+            "variantId": "fixture-variant-1"
+          }
+        ],
+        "maxCountInDeck": 4,
+        "name": "Fixturemon",
+        "number": "001",
+        "order": 1,
+        "pokemons": [
+          {
+            "id": "fixture-pokemon-1",
+            "name": "Fixturemon",
+            "number": 1
+          }
+        ],
+        "rarityId": "fixture-rarity-1",
+        "regulationMarkId": "fixture-regulation-1",
+        "set": {
+          "id": "fixture-set-record-1",
+          "name": "Fixture Set",
+          "releasedAt": "2000-01-01T00:00:00Z",
+          "series": {
+            "id": "fixture-series-record-1",
+            "name": "Fixture Series",
+            "region": {},
+            "seriesId": "fixture-series-1"
+          },
+          "seriesId": "fixture-series-1",
+          "setId": "fixture-set-1"
+        },
+        "setId": "fixture-set-1",
+        "stage": "Basic",
+        "supertype": {
+          "id": "fixture-supertype-record-1",
+          "index": 1,
+          "name": "Pokemon",
+          "supertypeId": "fixture-supertype-1"
+        },
+        "supertypeId": "fixture-supertype-1",
+        "thumbnailUrl": "https://example.invalid/card-thumbnail.png",
+        "updatedAt": "2000-01-01T00:00:00Z",
+        "variants": [
+          {
+            "imageUrl": null,
+            "thumbnailUrl": null,
+            "type": "Normal",
+            "variant": {}
+          }
+        ]
+      },
+      "cardId": "fixture-card-1",
+      "createdAt": "2000-01-01T00:00:00Z",
+      "id": "fixture-collection-entry-1",
+      "quantities": {
+        "holo": 1
+      },
+      "updatedAt": "2000-01-01T00:00:00Z",
+      "userId": "fixture-user-1"
+    }
+  ],
+  "totalItems": 1,
+  "totalPages": 1
+}
