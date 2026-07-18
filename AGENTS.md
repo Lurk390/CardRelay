@@ -544,7 +544,7 @@ Before reporting completion, run all applicable existing checks, typically inclu
 
 Prefer the repository's CI-equivalent command when one exists.
 
-If the full suite is too costly for an intermediate iteration, run focused checks first, but run all required checks before requesting permission to commit.
+If the full suite is too costly for an intermediate iteration, run focused checks first, but run all required checks before committing.
 
 Never claim a command passed unless it was actually executed successfully in the current working state.
 
@@ -590,7 +590,7 @@ If another change overlaps the task, preserve it and work around it. Explain a g
 
 ## Git and Commit Policy
 
-Do not commit automatically merely because implementation and tests are complete.
+The agent may commit and push completed, validated, in-scope work without separate user authorization unless the user explicitly asks it not to.
 
 A commit is permitted only when all of the following are true:
 
@@ -599,29 +599,17 @@ A commit is permitted only when all of the following are true:
 3. Applicable validation has passed.
 4. The working tree contains no unexplained changes.
 5. The agent has summarized the result and validation.
-6. The user has explicitly confirmed that they like the current project state and authorized a commit.
 
-Approval to implement is not approval to commit.
+Design decisions that materially affect product behavior, architecture, destructive synchronization policy, external-service risk, or dependency adoption still require explicit user approval before implementation.
 
-Approval to commit one state does not authorize later commits after additional modifications.
+Before committing:
 
-Before asking for commit authorization, provide:
-
-* a concise summary of behavior changed;
-* important design decisions;
-* files changed;
-* tests and checks run;
-* any remaining risks or limitations;
-* a proposed commit message.
-
-After authorization:
-
-* verify the diff and status again;
+* review the diff and status again;
 * stage only intended files;
 * create one focused commit unless the user requests otherwise;
 * report the resulting commit summary.
 
-Do not push unless the user explicitly requests a push.
+After a successful commit, the agent may push the current branch unless the user asks it not to or the task requires preserving the commit locally. Never force push.
 
 Do not create, update, or merge a pull request unless explicitly requested.
 
@@ -837,7 +825,7 @@ Ask:
 * Did the implementation change behavior outside the requested scope?
 * Would the test fail if the implementation were subtly wrong?
 
-Resolve discovered issues before asking for commit authorization.
+Resolve discovered issues before committing.
 
 ---
 
@@ -862,8 +850,7 @@ End implementation tasks with:
 
 ## Git status
 
-- Not committed
-- Commit authorization required
+- Commit and push status
 ```
 
 Keep the report factual and concise.
@@ -887,13 +874,11 @@ The user remains the final authority over:
 * destructive sync policy;
 * external-service risk;
 * dependency adoption;
-* commits;
-* pushes;
 * pull-request creation;
 * approvals;
 * merges;
 * releases.
 
-The agent may recommend a decision but must not impersonate human approval.
+Routine validated commits and pushes do not require separate approval. The agent may recommend a design decision but must not impersonate human approval for one.
 
-No AI-generated review, test result, or confidence statement overrides the requirement for explicit human authorization.
+No AI-generated review, test result, or confidence statement overrides the requirement for explicit human authorization on design decisions or destructive external actions.

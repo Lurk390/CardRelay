@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -122,4 +123,5 @@ def test_dex_schema_inspection_requires_explicit_acknowledgement(tmp_path: Path)
         ["dex", "inspect-schema", "--cdp-url", "http://127.0.0.1:9222", "--json"],
     )
     assert result.exit_code == 2
-    assert "--acknowledge-schema-inspection" in result.output
+    plain_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--acknowledge-schema-inspection" in plain_output
