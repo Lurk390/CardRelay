@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlparse
 
 import typer
 
@@ -292,6 +293,50 @@ def dex_inspect(
         {
             **diagnostics.model_dump(),
             "collection_extracted": False,
+            "writes_enabled": False,
+        },
+        as_json,
+    )
+
+
+@dex_app.command("inspect-schema")
+def dex_inspect_schema(
+    cdp_url: Annotated[str, typer.Option("--cdp-url")],
+    acknowledge: Annotated[
+        bool,
+        typer.Option(
+            "--acknowledge-schema-inspection",
+            help="Allow transient JSON parsing with values discarded immediately.",
+        ),
+    ] = False,
+    capture_seconds: Annotated[
+        int,
+        typer.Option("--capture-seconds", min=1, max=30),
+    ] = 5,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    if not acknowledge:
+        raise typer.BadParameter(
+            "schema inspection requires --acknowledge-schema-inspection because it transiently "
+            "parses JSON response bodies"
+        )
+    settings = load_settings().collectr.browser
+    manager = BrowserSessionManager(
+        browser_profile_directory("dex"), settings.navigation_timeout_seconds
+    )
+    expected_hostname = urlparse(DEX_WEB_URL).hostname
+    if expected_hostname is None:
+        raise RuntimeError("Dex web URL must include a hostname")
+    diagnostics = manager.inspect_active_cdp_page_schema(
+        cdp_url,
+        expected_hostname,
+        capture_seconds,
+    )
+    _emit(
+        {
+            **diagnostics.model_dump(),
+            "capture_boundary": "schema-only-in-memory",
+            "raw_values_retained": False,
             "writes_enabled": False,
         },
         as_json,

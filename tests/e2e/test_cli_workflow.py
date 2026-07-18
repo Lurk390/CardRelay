@@ -113,3 +113,13 @@ def test_browser_session_status_never_claims_authentication(tmp_path: Path) -> N
     dex = runner.invoke(app, ["dex", "session-status", "--json"])
     assert dex.exit_code == 0
     assert json.loads(dex.stdout)["authentication_status"] == "unknown"
+
+
+def test_dex_schema_inspection_requires_explicit_acknowledgement(tmp_path: Path) -> None:
+    runner = CliRunner(env={"CARD_RELAY_DATA_DIRECTORY": str(tmp_path)})
+    result = runner.invoke(
+        app,
+        ["dex", "inspect-schema", "--cdp-url", "http://127.0.0.1:9222", "--json"],
+    )
+    assert result.exit_code == 2
+    assert "--acknowledge-schema-inspection" in result.output
