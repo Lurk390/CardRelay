@@ -10,14 +10,17 @@ from sqlalchemy.orm import Session
 
 from card_relay.extension.companion import (
     CollectrExtensionCapture,
+    MappingDecisionUnavailable,
     SyncPreviewUnavailable,
     process_collectr_capture,
     process_dex_capture,
+    process_mapping_decision,
     process_sync_preview,
     serve_companion,
 )
 from card_relay.storage.database import create_database
 from card_relay.storage.models import SnapshotRow
+from card_relay.storage.repositories import MappingRepository
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "collectr"
 DEX_FIXTURE = Path(__file__).parents[1] / "fixtures" / "dex" / "extension_capture.json"
@@ -179,6 +182,117 @@ def test_companion_builds_card_level_read_only_sync_preview(tmp_path: Path) -> N
     assert sum(result.change_counts.values()) == len(result.changes)
     assert all(change.card for change in result.changes)
     assert all(change.current_quantity >= 0 for change in result.changes)
+    assert result.mapping_review_count == 1
+    assert result.mapping_reviews_truncated is False
+    review = result.mapping_reviews[0]
+    assert review.source_identity.card_name == "fixturemon"
+    assert review.status.value == "probable"
+    assert [candidate.destination_id for candidate in review.candidates] == ["fixture-card-1::holo"]
+
+
+def test_mapping_decision_is_current_candidate_bound_and_persistent(tmp_path: Path) -> None:
+    database_path = tmp_path / "card-relay.db"
+    process_collectr_capture(_payload(), database_path)
+    process_dex_capture(json.loads(DEX_FIXTURE.read_text(encoding="utf-8")), database_path)
+    preview = process_sync_preview(database_path)
+    review = preview.mapping_reviews[0]
+    destination_id = review.candidates[0].destination_id
+
+    with pytest.raises(MappingDecisionUnavailable, match="mapping_candidate_not_offered"):
+        process_mapping_decision(
+            {
+                "action": "confirm",
+                "source_fingerprint": review.source_fingerprint,
+                "destination_id": "unoffered-card",
+            },
+            database_path,
+        )
+
+    refreshed = process_mapping_decision(
+        {
+            "action": "confirm",
+            "source_fingerprint": review.source_fingerprint,
+            "destination_id": destination_id,
+        },
+        database_path,
+    )
+
+    assert refreshed.mapping_review_count == 0
+    assert MappingRepository(create_database(database_path)).list_confirmed("dex") == {
+        review.source_fingerprint: destination_id
+    }
+    with pytest.raises(MappingDecisionUnavailable, match="mapping_review_stale"):
+        process_mapping_decision(
+            {
+                "action": "confirm",
+                "source_fingerprint": review.source_fingerprint,
+                "destination_id": destination_id,
+            },
+            database_path,
+        )
+
+
+def test_rejecting_mapping_candidate_persists_and_clears_review(tmp_path: Path) -> None:
+    database_path = tmp_path / "card-relay.db"
+    process_collectr_capture(_payload(), database_path)
+    process_dex_capture(json.loads(DEX_FIXTURE.read_text(encoding="utf-8")), database_path)
+    review = process_sync_preview(database_path).mapping_reviews[0]
+    destination_id = review.candidates[0].destination_id
+
+    refreshed = process_mapping_decision(
+        {
+            "action": "reject",
+            "source_fingerprint": review.source_fingerprint,
+            "destination_id": destination_id,
+        },
+        database_path,
+    )
+
+    assert refreshed.mapping_review_count == 0
+    assert MappingRepository(create_database(database_path)).list_rejected("dex") == {
+        review.source_fingerprint: {destination_id}
+    }
+
+
+def test_companion_mapping_endpoint_rejects_unoffered_id_then_refreshes_preview(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "card-relay.db"
+    process_collectr_capture(_payload(), database_path)
+    process_dex_capture(json.loads(DEX_FIXTURE.read_text(encoding="utf-8")), database_path)
+    review = process_sync_preview(database_path).mapping_reviews[0]
+    server, token = serve_companion(database_path, 0, lambda: "test-token")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        invalid = {
+            "action": "confirm",
+            "source_fingerprint": review.source_fingerprint,
+            "destination_id": "unoffered-card",
+        }
+        connection.request("POST", "/v1/mappings/decisions", json.dumps(invalid), headers)
+        rejected = connection.getresponse()
+        rejected_payload = json.loads(rejected.read())
+        assert rejected.status == 409
+        assert rejected_payload == {
+            "error": "mapping_decision_rejected",
+            "reason": "mapping_candidate_not_offered",
+        }
+
+        accepted = invalid | {"destination_id": review.candidates[0].destination_id}
+        connection.request("POST", "/v1/mappings/decisions", json.dumps(accepted), headers)
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        assert response.status == 201
+        assert payload["mapping_review_count"] == 0
+        assert payload["destination_writes_enabled"] is False
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_sync_preview_reports_which_local_capture_is_missing(tmp_path: Path) -> None:
@@ -200,6 +314,11 @@ def test_extension_exposes_visual_diff_without_write_controls() -> None:
     assert "Build visual diff" in html
     assert "card-relay-sync-preview" in popup
     assert "/v1/sync/previews" in background
+    assert "Match review" in html
+    assert "Confirm match" in popup
+    assert "Reject candidate" in popup
+    assert "card-relay-mapping-decision" in popup
+    assert "/v1/mappings/decisions" in background
     assert "confirm-write" not in popup
 
 

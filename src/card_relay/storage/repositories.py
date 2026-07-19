@@ -185,13 +185,14 @@ class MappingReviewRepository:
     ) -> None:
         identities = {entry.fingerprint: entry.identity for entry in collection.entries}
         with Session(self.engine) as session:
-            for result in results:
-                session.execute(
-                    delete(MappingReviewRow).where(
-                        MappingReviewRow.source_fingerprint == result.source_fingerprint,
-                        MappingReviewRow.destination_name == destination,
-                    )
+            # A review queue represents one complete matching pass. Replace it so
+            # removed source records cannot leave actionable stale review rows.
+            session.execute(
+                delete(MappingReviewRow).where(
+                    MappingReviewRow.destination_name == destination,
                 )
+            )
+            for result in results:
                 if result.status not in {MatchStatus.PROBABLE, MatchStatus.AMBIGUOUS}:
                     continue
                 identity = identities[result.source_fingerprint]

@@ -29,6 +29,8 @@ Dex catalog pages stay only in the current tab's memory. Sanitized collection pa
 
 After storing both a Collectr capture and a Dex capture, select **Build visual diff**. The popup groups additions and increases separately from decreases and removals, shows Dex and Collectr quantities for each card, and highlights unresolved or unmanaged records. The companion returns at most 2,000 changes and the popup renders at most 250 at once; summary counts cover the full plan and truncation is explicit. This view is informational while Dex writes remain disabled.
 
+Probable and ambiguous Pokémon matches appear under **Match review**. Compare the card name, set, collector number, finish, score, and highlighted identity differences. Select the intended Dex candidate and choose **Confirm match**, or choose **Reject candidate** to prevent that pairing. The popup renders 50 pending records at a time and refreshes after each decision. Decisions are stored in CardRelay's local SQLite database, not extension storage, and therefore survive browser or companion restarts. Before saving, the companion reruns matching against the latest source and Dex snapshots and accepts only a candidate offered by that current result; a stale popup must rebuild the diff.
+
 After editing extension files, use **Reload** on the extension card at `chrome://extensions` and reload open Collectr or Dex tabs. A content-script-unavailable message almost always means the active tab predates the latest extension load.
 
 The pairing token is ephemeral: restarting the companion produces a new token. Private product response bodies remain in the tab until submission and are not written to extension storage. Bounded condition and grading lookup responses are kept in session storage so navigation cannot discard the metadata needed for safe normalization; Chrome clears that state with the browser session. If the Collectr client already cached those dictionaries, the page observer reads only its verified `cardConditions` and `gradedCardScales` entries, never arbitrary local storage. The companion validates captures with CardRelay's existing Collectr parser and stores the canonical collection plus snapshot metadata in local SQLite for later diff generation; it does not store the raw browser payload.
@@ -50,6 +52,7 @@ If Collectr neither requests nor has a valid cached condition or grading lookup 
 - **Invalid or rejected capture:** reload Collectr and start a fresh capture. CardRelay deliberately fails closed rather than guessing through a changed schema.
 - **Dex capture not ready:** complete the Collection step first, then keep one Search tab open until all catalog pages are captured.
 - **Dex normalization incomplete:** pagination succeeded, but one or more finish labels are not mapped. The snapshot remains read-only and incomplete; report the non-sensitive label diagnostics rather than guessing.
+- **Mapping unchanged / stale:** the source capture, Dex capture, or prior mapping changed after the popup loaded. Select **Build visual diff** and review the current candidate again.
 
 ## Current limits
 
@@ -57,5 +60,6 @@ If Collectr neither requests nor has a valid cached condition or grading lookup 
 - Capture and preview are manual. Periodic checks and notifications are not implemented.
 - A complete capture requires contiguous 30-record pages, the empty terminal page, exact/unstacked records, recognized condition and grading metadata, and a visible-total match.
 - Browser snapshots can never authorize decreases or removals at this stage.
+- Mapping confirmations only resolve identity; they do not approve a write or destructive operation.
 - The visual diff has no write-confirmation control until all Dex write contracts and read-after-write checks are verified.
 - The popup cannot write to Dex or any other destination.

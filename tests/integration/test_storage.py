@@ -91,6 +91,35 @@ def test_mapping_review_queue_persists_explanations_and_clears_resolved_item(tmp
     assert repository.list_pending("mock") == []
 
 
+def test_mapping_review_update_removes_records_absent_from_latest_source(tmp_path) -> None:
+    repository = MappingReviewRepository(create_database(tmp_path / "stale-reviews.db"))
+    identity = CanonicalCardIdentity(
+        card_name="Embermouse", set_name="Mythic Sparks", collector_number="1"
+    )
+    collection = CanonicalCollection(
+        entries=[
+            CanonicalCollectionEntry(
+                identity=identity, quantity=1, ingestion_method=IngestionMethod.CSV
+            )
+        ]
+    )
+    candidate = DestinationCatalogRecord(destination_id="candidate", identity=identity)
+    probable = MatchResult(
+        source_fingerprint=identity.fingerprint,
+        status=MatchStatus.PROBABLE,
+        candidate=candidate,
+        score=0.97,
+        candidate_ids=["candidate"],
+    )
+    repository.update("mock", collection, [probable])
+    repository.update("other", collection, [probable])
+
+    repository.update("mock", CanonicalCollection(entries=[]), [])
+
+    assert repository.list_pending("mock") == []
+    assert len(repository.list_pending("other")) == 1
+
+
 def test_catalog_cache_replaces_records_atomically_and_preserves_empty_cache(tmp_path) -> None:
     repository = CatalogCacheRepository(create_database(tmp_path / "catalog.db"))
     identity = CanonicalCardIdentity(

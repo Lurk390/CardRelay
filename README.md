@@ -104,8 +104,9 @@ The companion validates the untrusted browser payload with the same Python contr
 4. Keep that Search tab open. CardRelay replays the already-observed paginated read request at a bounded rate; no scrolling is required. Refresh status until every catalog page is present.
 5. Select **Send Dex read-only preview**. The extension sends bounded chunks to the loopback companion, which validates pagination, normalizes supported finish labels, caches the catalog, and stores the destination snapshot.
 6. After a Collectr capture and Dex capture are stored, select **Build visual diff** to review additions, increases, decreases, removals, and records blocked for mapping review.
+7. In **Match review**, compare the complete Collectr and Dex printing identities. Select a candidate and choose **Confirm match** only when they represent the same printing, or choose **Reject candidate** to exclude it. Each decision is revalidated against the latest captures, persisted in local SQLite, and immediately rebuilds the diff.
 
-The catalog remains only in the active Dex tab until submission; collection pages use Chrome session storage only so they survive the Collection-to-Search navigation. Missing or unknown finish labels are reported and mark normalization incomplete. This workflow never calls a Dex write operation.
+The match queue displays 50 records at a time and refreshes after every decision; summary counts cover the complete queue. Confirmations and rejections survive browser and companion restarts, but stale decisions and destination IDs not offered by the current matcher are rejected. The catalog remains only in the active Dex tab until submission; collection pages use Chrome session storage only so they survive the Collection-to-Search navigation. Missing or unknown finish labels are reported and mark normalization incomplete. This workflow never calls a Dex write operation.
 
 See the focused [extension guide](extension/README.md), [security and architecture details](docs/browser-extension.md), and [Collectr web contract](docs/collectr-browser-research.md).
 

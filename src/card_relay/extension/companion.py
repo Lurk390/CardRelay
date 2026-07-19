@@ -19,8 +19,9 @@ from card_relay.destinations.dex.normalizer import (
     normalize_dex_catalog,
     normalize_dex_collection,
 )
-from card_relay.domain.enums import OperationType
-from card_relay.domain.models import DestinationReadSnapshot
+from card_relay.domain.enums import MatchStatus, OperationType
+from card_relay.domain.models import CanonicalCardIdentity, DestinationReadSnapshot
+from card_relay.domain.results import MatchResult
 from card_relay.exceptions import CardRelayError, SourceValidationError
 from card_relay.matching import match_collection
 from card_relay.sources.collectr.browser_capture import (
@@ -52,6 +53,10 @@ PRODUCT_PAGE_SIZE = 30
 
 
 class SyncPreviewUnavailable(CardRelayError):
+    pass
+
+
+class MappingDecisionUnavailable(CardRelayError):
     pass
 
 
@@ -145,6 +150,33 @@ class DexCompanionCaptureResult(BaseModel):
     destination_writes_enabled: Literal[False] = False
 
 
+class CompanionMappingCandidate(BaseModel):
+    destination_id: str
+    identity: CanonicalCardIdentity
+    score: float = Field(ge=0, le=1)
+    reasons: list[str]
+    matched_fields: list[str]
+    mismatched_fields: list[str]
+
+
+class CompanionMappingReview(BaseModel):
+    source_fingerprint: str
+    source_identity: CanonicalCardIdentity
+    status: MatchStatus
+    reasons: list[str]
+    candidates: list[CompanionMappingCandidate]
+
+
+class MappingDecisionRequest(BaseModel):
+    action: Literal["confirm", "reject"]
+    source_fingerprint: str = Field(
+        min_length=10,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9]+:[a-f0-9]{64}$",
+    )
+    destination_id: str = Field(min_length=1, max_length=512)
+
+
 class CompanionSyncPreviewResult(BaseModel):
     destination: Literal["dex"] = "dex"
     source_completeness: str
@@ -154,6 +186,9 @@ class CompanionSyncPreviewResult(BaseModel):
     truncated: bool
     destructive_confirmation_code: None = None
     destination_writes_enabled: Literal[False] = False
+    mapping_reviews: list[CompanionMappingReview]
+    mapping_review_count: int
+    mapping_reviews_truncated: bool
     warnings: list[str]
 
 
@@ -245,7 +280,8 @@ def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
         mappings.list_confirmed("dex"),
         mappings.list_rejected("dex"),
     )
-    MappingReviewRepository(engine).update("dex", source, matches)
+    review_repository = MappingReviewRepository(engine)
+    review_repository.update("dex", source, matches)
     plan = build_plan(
         source,
         destination.collection,
@@ -263,6 +299,8 @@ def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
     counts = {kind.value: 0 for kind in OperationType}
     for change in changes:
         counts[change.change] += 1
+    pending_reviews = review_repository.list_pending("dex")
+    maximum_reviews = 500
     return CompanionSyncPreviewResult(
         source_completeness=source.completeness.value,
         changes=changes[:maximum_changes],
@@ -272,7 +310,66 @@ def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
             for change in changes
         ),
         truncated=len(changes) > maximum_changes,
+        mapping_reviews=[
+            _companion_mapping_review(item) for item in pending_reviews[:maximum_reviews]
+        ],
+        mapping_review_count=len(pending_reviews),
+        mapping_reviews_truncated=len(pending_reviews) > maximum_reviews,
         warnings=plan.warnings,
+    )
+
+
+def process_mapping_decision(
+    payload: object,
+    database_path: Path,
+) -> CompanionSyncPreviewResult:
+    request = MappingDecisionRequest.model_validate(payload)
+    # Rebuild first so a decision can only target a candidate offered by the latest
+    # source and destination snapshots, never a stale popup or arbitrary ID.
+    process_sync_preview(database_path)
+    engine = create_database(database_path)
+    pending = MappingReviewRepository(engine).list_pending("dex")
+    review = next(
+        (item for item in pending if item["source_fingerprint"] == request.source_fingerprint),
+        None,
+    )
+    if review is None:
+        raise MappingDecisionUnavailable("mapping_review_stale")
+    match = MatchResult.model_validate(review["match"])
+    if request.destination_id not in match.candidate_ids:
+        raise MappingDecisionUnavailable("mapping_candidate_not_offered")
+    mappings = MappingRepository(engine)
+    if request.action == "confirm":
+        mappings.confirm(request.source_fingerprint, "dex", request.destination_id)
+    else:
+        mappings.reject(request.source_fingerprint, "dex", request.destination_id)
+    return process_sync_preview(database_path)
+
+
+def _companion_mapping_review(item: dict[str, object]) -> CompanionMappingReview:
+    match = MatchResult.model_validate(item["match"])
+    offered_ids = set(match.candidate_ids)
+    candidates = sorted(
+        (
+            CompanionMappingCandidate(
+                destination_id=alternative.candidate.destination_id,
+                identity=alternative.candidate.identity,
+                score=alternative.score,
+                reasons=alternative.reasons,
+                matched_fields=alternative.matched_fields,
+                mismatched_fields=alternative.mismatched_fields,
+            )
+            for alternative in match.alternatives
+            if alternative.candidate.destination_id in offered_ids
+        ),
+        key=lambda candidate: (-candidate.score, candidate.destination_id),
+    )
+    return CompanionMappingReview(
+        source_fingerprint=str(item["source_fingerprint"]),
+        source_identity=CanonicalCardIdentity.model_validate(item["source_identity"]),
+        status=match.status,
+        reasons=match.reasons,
+        candidates=candidates,
     )
 
 
@@ -377,6 +474,7 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             "/v1/dex/captures",
             "/v1/dex/capture-chunks",
             "/v1/sync/previews",
+            "/v1/mappings/decisions",
         }:
             self._write_json(404, {"error": "not_found"})
             return
@@ -414,6 +512,8 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
                 result = process_dex_capture(payload, self.server.database_path)
             elif self.path == "/v1/sync/previews":
                 result = process_sync_preview(self.server.database_path)
+            elif self.path == "/v1/mappings/decisions":
+                result = process_mapping_decision(payload, self.server.database_path)
             else:
                 result = process_collectr_capture(payload, self.server.database_path)
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -448,6 +548,12 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             self._write_json(
                 409,
                 {"error": "preview_unavailable", "reason": str(error)},
+            )
+            return
+        except MappingDecisionUnavailable as error:
+            self._write_json(
+                409,
+                {"error": "mapping_decision_rejected", "reason": str(error)},
             )
             return
         except CardRelayError:

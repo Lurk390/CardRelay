@@ -8,6 +8,8 @@ const catalogButton = document.querySelector("#start-catalog");
 const sendButton = document.querySelector("#send");
 const diffSummary = document.querySelector("#diff-summary");
 const diffList = document.querySelector("#diff-list");
+const reviewSummary = document.querySelector("#review-summary");
+const reviewList = document.querySelector("#review-list");
 
 async function activeSupportedTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -137,7 +139,9 @@ function displaySyncPreview(result) {
     `Adds: ${counts.add_card || 0} · Increases: ${counts.increase_quantity || 0}`,
     `Decreases: ${counts.decrease_quantity || 0} · Removals: ${counts.remove_card || 0}`,
     `Review/blocked: ${(counts.manual_review_required || 0) + (counts.unsupported_operation || 0)}`,
-    result.truncated ? "The displayed list is truncated." : "All changes are displayed.",
+    result.truncated || visibleChanges.length > 250
+      ? "The displayed diff list is truncated."
+      : "All changes are displayed.",
     "Writes are disabled until the Dex write contract is separately verified."
   ].join("\n");
   diffList.replaceChildren();
@@ -154,6 +158,114 @@ function displaySyncPreview(result) {
     detail.textContent = `${change.change.replaceAll("_", " ")}: Dex ${change.current_quantity} → Collectr ${change.collectr_quantity}`;
     item.append(title, detail);
     diffList.append(item);
+  }
+  displayMappingReviews(result);
+}
+
+function identityLabel(identity) {
+  const set = identity.set_name || identity.set_code || "Unknown set";
+  const finish = identity.finish && identity.finish !== "unknown" ? ` · ${identity.finish}` : "";
+  return `${identity.card_name} · ${set} #${identity.collector_number}${finish}`;
+}
+
+function fieldLabels(fields) {
+  return (fields || []).map(field => field.replaceAll("_", " ")).join(", ");
+}
+
+async function submitMappingDecision(review, action, destinationId) {
+  reviewSummary.textContent = `${action === "confirm" ? "Confirming" : "Rejecting"} mapping…`;
+  for (const button of reviewList.querySelectorAll("button")) button.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "card-relay-mapping-decision",
+      decision: {
+        action,
+        source_fingerprint: review.source_fingerprint,
+        destination_id: destinationId
+      }
+    });
+    if (!response?.ok) {
+      reviewSummary.textContent = `Mapping unchanged: ${response?.error || "unknown error"}`;
+      for (const button of reviewList.querySelectorAll("button")) button.disabled = false;
+      return;
+    }
+    displaySyncPreview(response.result);
+  } catch {
+    reviewSummary.textContent = "Mapping unchanged: companion unavailable";
+    for (const button of reviewList.querySelectorAll("button")) button.disabled = false;
+  }
+}
+
+function displayMappingReviews(result) {
+  const reviews = result.mapping_reviews || [];
+  const total = result.mapping_review_count || 0;
+  reviewList.replaceChildren();
+  if (!total) {
+    reviewSummary.textContent = "No probable or ambiguous matches are waiting for review.";
+    return;
+  }
+  const visibleReviews = reviews.slice(0, 50);
+  reviewSummary.textContent = [
+    `${total} match${total === 1 ? "" : "es"} waiting for review.`,
+    total > visibleReviews.length || result.mapping_reviews_truncated
+      ? `Showing the first ${visibleReviews.length}; decisions refresh the queue.`
+      : "Every pending match is shown."
+  ].join(" ");
+  for (const review of visibleReviews) {
+    const item = document.createElement("div");
+    item.className = "review-item";
+
+    const source = document.createElement("div");
+    source.className = "review-source";
+    source.textContent = `Collectr: ${identityLabel(review.source_identity)}`;
+    const reason = document.createElement("div");
+    reason.className = "review-reason";
+    reason.textContent = `${review.status}: ${(review.reasons || []).join("; ")}`;
+    item.append(source, reason);
+
+    const radioName = `mapping-${review.source_fingerprint}`;
+    for (const [index, candidate] of (review.candidates || []).entries()) {
+      const label = document.createElement("label");
+      label.className = "mapping-candidate";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = radioName;
+      radio.value = candidate.destination_id;
+      radio.checked = index === 0;
+      const candidateTitle = document.createElement("span");
+      candidateTitle.textContent = `Dex: ${identityLabel(candidate.identity)}`;
+      const detail = document.createElement("span");
+      detail.className = "candidate-detail";
+      const mismatches = fieldLabels(candidate.mismatched_fields);
+      detail.textContent = [
+        `Score ${Math.round(candidate.score * 100)}%.`,
+        mismatches ? `Different: ${mismatches}.` : "All compared identity fields agree.",
+        ...(candidate.reasons || [])
+      ].join(" ");
+      label.append(radio, candidateTitle, detail);
+      item.append(label);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "review-actions";
+    const confirm = document.createElement("button");
+    confirm.textContent = "Confirm match";
+    const reject = document.createElement("button");
+    reject.className = "reject";
+    reject.textContent = "Reject candidate";
+    const decide = action => {
+      const selected = item.querySelector(`input[name="${radioName}"]:checked`);
+      if (!selected) {
+        reviewSummary.textContent = "Select a Dex candidate first.";
+        return;
+      }
+      void submitMappingDecision(review, action, selected.value);
+    };
+    confirm.addEventListener("click", () => decide("confirm"));
+    reject.addEventListener("click", () => decide("reject"));
+    actions.append(confirm, reject);
+    item.append(actions);
+    reviewList.append(item);
   }
 }
 

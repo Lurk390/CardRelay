@@ -5,7 +5,8 @@ void chrome.storage.session.setAccessLevel({
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!["card-relay-companion-submit", "card-relay-sync-preview"].includes(message?.type)) {
+  if (!["card-relay-companion-submit", "card-relay-sync-preview", "card-relay-mapping-decision"]
+    .includes(message?.type)) {
     return false;
   }
   chrome.storage.local.get(["companionPort", "pairingToken"]).then(async settings => {
@@ -17,20 +18,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
     try {
       const isPreview = message.type === "card-relay-sync-preview";
+      const isMappingDecision = message.type === "card-relay-mapping-decision";
       const isDexChunk = message.capture?.contract_version === "dex-extension-chunk-v1";
       const isDex = message.capture?.contract_version === "dex-extension-v1";
       const capturePath = isPreview
         ? "/v1/sync/previews"
-        : (isDexChunk
-          ? "/v1/dex/capture-chunks"
-          : (isDex ? "/v1/dex/captures" : "/v1/collectr/captures"));
+        : (isMappingDecision
+          ? "/v1/mappings/decisions"
+          : (isDexChunk
+            ? "/v1/dex/capture-chunks"
+            : (isDex ? "/v1/dex/captures" : "/v1/collectr/captures")));
       const response = await fetch(`http://127.0.0.1:${port}${capturePath}`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(message.capture || {}),
+        body: JSON.stringify(isMappingDecision ? message.decision : (message.capture || {})),
         cache: "no-store"
       });
       const payload = await response.json();

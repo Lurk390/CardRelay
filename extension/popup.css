@@ -33,7 +33,7 @@ h2 {
   font-size: 15px;
 }
 
-p, #status, #diff-summary {
+p, #status, #diff-summary, #review-summary {
   color: #b7c2c6;
   font-size: 13px;
 }
@@ -42,6 +42,13 @@ p, #status, #diff-summary {
   display: grid;
   gap: 7px;
   max-height: 280px;
+  overflow-y: auto;
+}
+
+#review-list {
+  display: grid;
+  gap: 10px;
+  max-height: 420px;
   overflow-y: auto;
 }
 
@@ -72,6 +79,57 @@ p, #status, #diff-summary {
 .diff-detail {
   margin-top: 3px;
   color: #b7c2c6;
+}
+
+.review-item {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border-left: 3px solid #f5bf42;
+  border-radius: 5px;
+  background: #0d1012;
+  font-size: 12px;
+}
+
+.review-source {
+  font-weight: 700;
+}
+
+.review-reason, .candidate-detail {
+  color: #b7c2c6;
+}
+
+.mapping-candidate {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 7px;
+  align-items: start;
+  padding: 7px;
+  border: 1px solid #354249;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mapping-candidate input {
+  width: auto;
+  min-height: auto;
+  margin: 2px 0 0;
+}
+
+.candidate-detail {
+  grid-column: 2;
+}
+
+.review-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.review-actions .reject {
+  border: 1px solid #ff6b6b;
+  background: transparent;
+  color: #ff9a9a;
 }
 
 #status {
