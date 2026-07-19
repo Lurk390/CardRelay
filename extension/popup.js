@@ -3,17 +3,23 @@
 const portInput = document.querySelector("#port");
 const tokenInput = document.querySelector("#token");
 const statusElement = document.querySelector("#status");
+const startButton = document.querySelector("#start");
+const catalogButton = document.querySelector("#start-catalog");
 const sendButton = document.querySelector("#send");
 
-async function activeCollectrTab() {
+async function activeSupportedTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url?.startsWith("https://app.getcollectr.com/")) {
-    throw new Error("Open app.getcollectr.com in the active tab.");
+  if (!tab?.id) throw new Error("Open Collectr or Dex in the active tab.");
+  if (tab.url?.startsWith("https://app.getcollectr.com/")) {
+    return { tab, service: "collectr" };
   }
-  return tab;
+  if (tab.url?.startsWith("https://app.dextcg.com/")) {
+    return { tab, service: "dex" };
+  }
+  throw new Error("Open app.getcollectr.com or app.dextcg.com in the active tab.");
 }
 
-function displayStatus(status) {
+function displayCollectrStatus(status) {
   const ready = status.productPageCount > 0 &&
     status.offsetsContiguous &&
     status.exactViewVerified &&
@@ -29,12 +35,40 @@ function displayStatus(status) {
   ].join("\n");
 }
 
+function displayDexStatus(status) {
+  sendButton.disabled = !status.collectionComplete || !status.catalogComplete;
+  const collectionCount = status.collectionTotalPages
+    ? `${status.collectionPageCount}/${status.collectionTotalPages}`
+    : String(status.collectionPageCount);
+  const catalogCount = status.catalogTotalPages
+    ? `${status.catalogPageCount}/${status.catalogTotalPages}`
+    : String(status.catalogPageCount);
+  statusElement.textContent = [
+    `Active Dex capture: ${status.activeTarget || "none"}`,
+    `Collection pages: ${collectionCount} (${status.collectionComplete ? "complete" : "incomplete"})`,
+    `Catalog pages: ${catalogCount} (${status.catalogComplete ? "complete" : "incomplete"})`,
+    status.collectionConflict || status.catalogConflict
+      ? "Conflicting repeated page detected; restart that capture."
+      : "Catalog pages load gradually; manual browsing remains available."
+  ].join("\n");
+}
+
+function configureForService(service) {
+  const isDex = service === "dex";
+  startButton.textContent = isDex ? "Start Dex collection capture" : "Start portfolio capture";
+  catalogButton.hidden = !isDex;
+  sendButton.textContent = isDex ? "Send Dex read-only preview" : "Send preview to CardRelay";
+}
+
 async function refreshStatus() {
   try {
-    const tab = await activeCollectrTab();
-    const response = await chrome.tabs.sendMessage(tab.id, { type: "card-relay-status" });
-    if (!response?.ok) throw new Error("CardRelay content script is unavailable. Reload Collectr.");
-    displayStatus(response.status);
+    const { tab, service } = await activeSupportedTab();
+    configureForService(service);
+    const type = service === "dex" ? "card-relay-dex-status" : "card-relay-status";
+    const response = await chrome.tabs.sendMessage(tab.id, { type });
+    if (!response?.ok) throw new Error("CardRelay content script is unavailable. Reload the tab.");
+    if (service === "dex") displayDexStatus(response.status);
+    else displayCollectrStatus(response.status);
   } catch (error) {
     sendButton.disabled = true;
     statusElement.textContent = error.message;
@@ -52,9 +86,18 @@ document.querySelector("#save").addEventListener("click", async () => {
   statusElement.textContent = "Pairing saved locally in this extension profile.";
 });
 
-document.querySelector("#start").addEventListener("click", async () => {
+startButton.addEventListener("click", async () => {
   try {
-    const tab = await activeCollectrTab();
+    const { tab, service } = await activeSupportedTab();
+    if (service === "dex") {
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        type: "card-relay-dex-start",
+        target: "collection"
+      });
+      if (!response?.ok) throw new Error("Unable to start Dex collection capture.");
+      displayDexStatus(response.status);
+      return;
+    }
     const response = await chrome.tabs.sendMessage(tab.id, { type: "card-relay-start" });
     if (!response?.ok) throw new Error("Unable to start capture. Reload Collectr and retry.");
     if (response.navigateToProducts) {
@@ -62,7 +105,22 @@ document.querySelector("#start").addEventListener("click", async () => {
       window.close();
       return;
     }
-    displayStatus(response.status);
+    displayCollectrStatus(response.status);
+  } catch (error) {
+    statusElement.textContent = error.message;
+  }
+});
+
+catalogButton.addEventListener("click", async () => {
+  try {
+    const { tab, service } = await activeSupportedTab();
+    if (service !== "dex") throw new Error("Open Dex before starting a catalog capture.");
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      type: "card-relay-dex-start",
+      target: "catalog"
+    });
+    if (!response?.ok) throw new Error("Unable to start Dex catalog capture.");
+    displayDexStatus(response.status);
   } catch (error) {
     statusElement.textContent = error.message;
   }
@@ -70,14 +128,30 @@ document.querySelector("#start").addEventListener("click", async () => {
 
 document.querySelector("#refresh").addEventListener("click", refreshStatus);
 
-document.querySelector("#send").addEventListener("click", async () => {
+sendButton.addEventListener("click", async () => {
   sendButton.disabled = true;
   statusElement.textContent = "Validating preview in CardRelay…";
   try {
-    const tab = await activeCollectrTab();
-    const response = await chrome.tabs.sendMessage(tab.id, { type: "card-relay-submit" });
+    const { tab, service } = await activeSupportedTab();
+    const type = service === "dex" ? "card-relay-dex-submit" : "card-relay-submit";
+    const response = await chrome.tabs.sendMessage(tab.id, { type });
     if (!response?.ok) throw new Error(`Preview rejected: ${response?.error || "unknown error"}`);
     const result = response.result;
+    if (service === "dex") {
+      statusElement.textContent = [
+        `Dex catalog records: ${result.catalog_records}`,
+        `Dex collection records: ${result.collection_records}`,
+        `Dex quantity: ${result.total_quantity}`,
+        `Pagination complete: ${result.pagination_complete ? "yes" : "no"}`,
+        `Normalization complete: ${result.normalization_complete ? "yes" : "no"}`,
+        `Unsupported labels: ${(result.unsupported_catalog_variants?.length || 0) +
+          (result.unsupported_collection_quantities?.length || 0)}`,
+        result.normalization_complete
+          ? "Read-only snapshot stored. Destination writes remain disabled."
+          : "Incomplete read-only snapshot stored; review diagnostics before comparison."
+      ].join("\n");
+      return;
+    }
     const invalidReasons = Object.entries(result.invalid_record_reasons || {})
       .filter(([, count]) => count > 0)
       .map(([reason, count]) => `  ${reason.replaceAll("_", " ")}: ${count}`);

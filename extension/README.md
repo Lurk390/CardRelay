@@ -1,6 +1,6 @@
-# CardRelay Collectr Bridge
+# CardRelay browser bridge
 
-This unpacked Manifest V3 extension captures a Collectr portfolio from the user's normal authenticated Chrome tab and sends it only to CardRelay's loopback companion. It does not read passwords, cookies, authorization headers, or unrelated pages. Destination writes are disabled.
+This unpacked Manifest V3 extension captures Collectr source data and Dex read-only destination data from the user's normal authenticated Chrome tabs. It sends sanitized captures only to CardRelay's loopback companion. It does not read passwords, cookies, authorization headers, or unrelated pages. Destination writes are disabled.
 
 ## Load and run locally
 
@@ -17,7 +17,17 @@ This unpacked Manifest V3 extension captures a Collectr portfolio from the user'
 6. Open the Collectr portfolio overview in the active tab and select **Start portfolio capture**.
 7. The extension opens the Products view and scrolls while Collectr loads batches. Reopen the popup to inspect progress and send the preview.
 
-After editing extension files, use **Reload** on the extension card at `chrome://extensions` and reload open Collectr tabs. A content-script-unavailable message almost always means the Collectr tab predates the latest extension load.
+## Dex read-only workflow
+
+1. Open Dex **Collection**, then select **Start Dex collection capture** in CardRelay.
+2. Refresh status until collection pages are complete and `Active Dex capture` is `none`.
+3. Navigate to Dex **Search** and select **Start Dex catalog capture**.
+4. Keep the tab open while CardRelay loads the verified pagination sequence at a 200 ms interval. You do not need to scroll the catalog.
+5. Refresh status until the captured and expected page counts match, then select **Send Dex read-only preview**.
+
+Dex catalog pages stay only in the current tab's memory. Sanitized collection pages use session storage so navigation does not discard them. Submission is split into small, ordered loopback requests; the companion rejects gaps, reordered chunks, incomplete pagination, conflicting totals, oversized captures, and changed schemas. A successful preview stores normalized counts and reports unsupported finish labels without exposing card data. Dex writes remain disabled.
+
+After editing extension files, use **Reload** on the extension card at `chrome://extensions` and reload open Collectr or Dex tabs. A content-script-unavailable message almost always means the active tab predates the latest extension load.
 
 The pairing token is ephemeral: restarting the companion produces a new token. Private product response bodies remain in the tab until submission and are not written to extension storage. Bounded condition and grading lookup responses are kept in session storage so navigation cannot discard the metadata needed for safe normalization; Chrome clears that state with the browser session. If the Collectr client already cached those dictionaries, the page observer reads only its verified `cardConditions` and `gradedCardScales` entries, never arbitrary local storage. The companion validates captures with CardRelay's existing Collectr parser and stores only the source snapshot metadata already used by the CLI.
 
@@ -32,10 +42,12 @@ If Collectr neither requests nor has a valid cached condition or grading lookup 
 ## Troubleshooting
 
 - **Pairing required:** copy the current token from the running companion and save it again.
-- **Companion unavailable:** keep `extension serve` running and verify the port.
+- **Companion unavailable:** keep `extension serve` running and verify the port. Restarting it creates a new token that must be saved again.
 - **Capture not ready:** restart from Collectr's portfolio overview; aggregate and conflicting pages are rejected.
 - **Terminal page missing:** wait for scrolling to become idle, then refresh the popup status.
 - **Invalid or rejected capture:** reload Collectr and start a fresh capture. CardRelay deliberately fails closed rather than guessing through a changed schema.
+- **Dex capture not ready:** complete the Collection step first, then keep one Search tab open until all catalog pages are captured.
+- **Dex normalization incomplete:** pagination succeeded, but one or more finish labels are not mapped. The snapshot remains read-only and incomplete; report the non-sensitive label diagnostics rather than guessing.
 
 ## Current limits
 

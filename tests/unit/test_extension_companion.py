@@ -17,6 +17,7 @@ from card_relay.storage.database import create_database
 from card_relay.storage.models import SnapshotRow
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "collectr"
+DEX_FIXTURE = Path(__file__).parents[1] / "fixtures" / "dex" / "extension_capture.json"
 EXTENSION = Path(__file__).parents[2] / "extension"
 
 
@@ -130,6 +131,82 @@ def test_companion_requires_pairing_token_and_returns_only_preview(tmp_path: Pat
         thread.join(timeout=5)
 
 
+def test_companion_accepts_only_validated_dex_read_capture(tmp_path: Path) -> None:
+    server, token = serve_companion(tmp_path / "card-relay.db", 0, lambda: "test-token")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+    body = DEX_FIXTURE.read_text(encoding="utf-8")
+    try:
+        connection.request(
+            "POST",
+            "/v1/dex/captures",
+            body=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        assert response.status == 201
+        assert payload["catalog_records"] == 2
+        assert payload["collection_records"] == 1
+        assert payload["destination_writes_enabled"] is False
+        assert "catalog" not in payload
+        assert "collection" not in payload
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_companion_accepts_dex_capture_in_bounded_contiguous_chunks(tmp_path: Path) -> None:
+    server, token = serve_companion(tmp_path / "card-relay.db", 0, lambda: "test-token")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    fixture = json.loads(DEX_FIXTURE.read_text(encoding="utf-8"))
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        first = {
+            "contract_version": "dex-extension-chunk-v1",
+            "upload_id": "fixture-upload-01",
+            "chunk_index": 0,
+            "chunk_count": 2,
+            "collection_pages": fixture["collection_pages"],
+            "catalog_pages": [],
+        }
+        connection.request("POST", "/v1/dex/capture-chunks", json.dumps(first), headers)
+        interim = connection.getresponse()
+        interim_payload = json.loads(interim.read())
+        assert interim.status == 201
+        assert interim_payload["upload_complete"] is False
+        assert interim_payload["next_chunk_index"] == 1
+
+        second = {
+            "contract_version": "dex-extension-chunk-v1",
+            "upload_id": "fixture-upload-01",
+            "chunk_index": 1,
+            "chunk_count": 2,
+            "collection_pages": [],
+            "catalog_pages": fixture["catalog_pages"],
+        }
+        connection.request("POST", "/v1/dex/capture-chunks", json.dumps(second), headers)
+        accepted = connection.getresponse()
+        accepted_payload = json.loads(accepted.read())
+        assert accepted.status == 201
+        assert accepted_payload["catalog_records"] == 2
+        assert accepted_payload["collection_records"] == 1
+        assert accepted_payload["destination_writes_enabled"] is False
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 @pytest.mark.parametrize(
     ("body", "expected_error"),
     [
@@ -158,7 +235,15 @@ def test_companion_reports_safe_capture_rejection_stage(
         payload = json.loads(response.read())
 
         assert response.status == 400
-        assert payload == {"error": expected_error}
+        assert payload["error"] == expected_error
+        if expected_error == "invalid_capture_contract":
+            assert payload["issues"] == [
+                {"location": "product_pages", "type": "missing"},
+                {"location": "exact_view_verified", "type": "missing"},
+            ]
+            assert "collectr-extension-v1" not in json.dumps(payload)
+        else:
+            assert payload == {"error": expected_error}
     finally:
         connection.close()
         server.shutdown()
@@ -172,11 +257,23 @@ def test_extension_manifest_permissions_remain_narrow() -> None:
     assert manifest["permissions"] == ["activeTab", "storage"]
     assert manifest["host_permissions"] == [
         "https://app.getcollectr.com/*",
+        "https://app.dextcg.com/*",
         "http://127.0.0.1/*",
     ]
     serialized = json.dumps(manifest)
     for forbidden in ("<all_urls>", "cookies", "debugger", "webRequest", "downloads"):
         assert forbidden not in serialized
+
+
+def test_extension_dex_capture_is_manual_and_strips_sensitive_fields() -> None:
+    observer = (EXTENSION / "dex-page-observer.js").read_text(encoding="utf-8")
+
+    assert "let captureTarget = null;" in observer
+    assert 'message.type !== "capture-control"' in observer
+    assert "userId" not in observer
+    assert "createdAt" not in observer
+    assert "markets" not in observer
+    assert "imageUrl" not in observer
 
 
 def test_extension_preserves_only_lookup_metadata_across_navigation() -> None:

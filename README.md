@@ -6,7 +6,7 @@ CardRelay is an early open-source trading-card collection synchronization engine
 
 ## Current status
 
-Milestones 1 through 3 are implemented. The browser source provides a visible persistent Collectr session, verified portfolio discovery, structured response capture, infinite scrolling, embedded-data and DOM fallbacks, completeness diagnostics, sanitized fixtures, CSV equivalence tests, and browser snapshots. Destination catalogs are canonically normalized and cached; constrained probable scoring, ambiguity review, match explanations, confirmed mappings, and multiple rejected candidates persist in SQLite. Browser extraction remains experimental: it can drive additions and quantity increases, but its separate reliability gate deliberately prevents decreases and removals. Dex remains scaffolded for Milestone 4.
+Milestones 1 through 4 are implemented. The browser source provides a visible persistent Collectr session, verified portfolio discovery, structured response capture, infinite scrolling, embedded-data and DOM fallbacks, completeness diagnostics, sanitized fixtures, CSV equivalence tests, and browser snapshots. Destination catalogs are canonically normalized and cached; constrained probable scoring, ambiguity review, match explanations, confirmed mappings, and multiple rejected candidates persist in SQLite. The extension can also capture Dex's catalog and current collection into a validated, read-only SQLite snapshot for dry-run comparison. Browser extraction remains experimental, and all Dex writes remain disabled.
 
 Safety defaults matter: every sync is a dry run, writes require explicit application action, ambiguous records are never applied, and decreases/removals remain blocked unless separately enabled with thresholds. Incomplete sources cannot authorize destructive operations.
 
@@ -58,9 +58,9 @@ uv run card-relay extension serve --port 8877
 2. Enable **Developer mode**.
 3. Select **Load unpacked**.
 4. Choose the repository's `extension` directory—the directory containing `manifest.json`, not the repository root.
-5. Optionally pin **CardRelay Collectr Bridge** from Chrome's extensions menu.
+5. Optionally pin **CardRelay Bridge** from Chrome's extensions menu.
 
-After changing extension source files, select **Reload** on the extension card and reload any already-open Collectr tabs so the new content scripts are installed.
+After changing extension source files, select **Reload** on the extension card and reload any already-open Collectr or Dex tabs so the new content scripts are installed. Reloading the extension during a capture clears its in-memory progress.
 
 ### 3. Pair CardRelay
 
@@ -93,6 +93,16 @@ The companion validates the untrusted browser payload with the same Python contr
 - **Terminal page says no:** wait for capture to become idle and retry. The preview remains incomplete if Collectr never returns its empty terminal batch.
 - **Preview is incomplete with entries:** CardRelay retained safe ungraded records but could not resolve every condition or graded-card lookup. Omitted or lossy rows are reported and destructive planning stays blocked.
 - **Google rejects Playwright login:** use the extension in normal Chrome. CardRelay does not weaken browser security or disguise automation to bypass that rejection.
+
+### Capture a read-only Dex snapshot
+
+1. Keep `card-relay extension serve` running and use the same saved pairing.
+2. Sign in to Dex normally, open **Dashboard → Collection**, open CardRelay, and select **Start Dex collection capture**. Refresh status until collection capture is complete and the active target returns to `none`.
+3. Open Dex **Search**, open CardRelay, and select **Start Dex catalog capture**.
+4. Keep that Search tab open. CardRelay replays the already-observed paginated read request at a bounded rate; no scrolling is required. Refresh status until every catalog page is present.
+5. Select **Send Dex read-only preview**. The extension sends bounded chunks to the loopback companion, which validates pagination, normalizes supported finish labels, caches the catalog, and stores the destination snapshot.
+
+The catalog remains only in the active Dex tab until submission; collection pages use Chrome session storage only so they survive the Collection-to-Search navigation. Missing or unknown finish labels are reported and mark normalization incomplete. This workflow never calls a Dex write operation.
 
 See the focused [extension guide](extension/README.md), [security and architecture details](docs/browser-extension.md), and [Collectr web contract](docs/collectr-browser-research.md).
 
@@ -129,7 +139,7 @@ An explicit local mock write remains limited to additions and quantity increases
 uv run card-relay sync --csv tests/fixtures/collectr/plausible_export.csv --destination mock --apply
 ```
 
-The browser source keeps private product payloads in memory only long enough to validate and normalize them. The extension preserves only bounded condition and grading lookup metadata in browser-session storage across navigation and reads only the two metadata-cache keys verified in Collectr's current client. It requests no undocumented write operation, does not bypass login, CAPTCHA, access-control, or rate-limit behavior, and fails closed when completeness evidence is insufficient. Dex transport remains disabled pending its read-only milestone.
+The browser source keeps private product payloads in memory only long enough to validate and normalize them. The extension preserves only bounded condition/grading metadata and sanitized Dex collection pages in browser-session storage across navigation. Large Dex catalog pages remain tab-memory-only and cross the loopback boundary in bounded chunks. It requests no undocumented write operation, does not bypass login, CAPTCHA, access-control, or rate-limit behavior, and fails closed when completeness evidence is insufficient.
 
 ## Architecture
 
@@ -137,4 +147,4 @@ The browser source keeps private product payloads in memory only long enough to 
 
 Local snapshots may contain private collection metadata. Authentication state is never placed in snapshots and browser profiles remain local and ignored. Users are responsible for complying with each platform's terms; CardRelay does not bypass access controls, anti-bot systems, or rate limits.
 
-Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src`. Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Roadmap: demonstrate the browser reliability promotion gates, add researched Dex read-only support, safe writes, controlled destructive sync, then more adapters and extension automation.
+Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src`. Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Roadmap: add separately approved Dex safe writes, controlled destructive sync, another destination adapter, and later extension automation.

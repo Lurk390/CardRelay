@@ -93,7 +93,7 @@ def test_dex_collection_contract_rejects_mismatched_card_identifier() -> None:
         DexCollectionPage.model_validate(payload)
 
 
-def test_dex_collection_contract_rejects_mismatched_set_identifier() -> None:
+def test_dex_collection_contract_distinguishes_relational_and_public_set_identifiers() -> None:
     payload = deepcopy(_load_fixture("collection_page_one_card.json"))
     result = payload["result"]
     assert isinstance(result, list)
@@ -101,10 +101,12 @@ def test_dex_collection_contract_rejects_mismatched_set_identifier() -> None:
     assert isinstance(entry, dict)
     card = entry["card"]
     assert isinstance(card, dict)
-    card["setId"] = "fixture-different-set"
+    card["setId"] = "fixture-relational-set-id"
 
-    with pytest.raises(ValidationError, match="setId must match"):
-        DexCollectionPage.model_validate(payload)
+    page = DexCollectionPage.model_validate(payload)
+
+    assert page.result[0].card.set_id == "fixture-relational-set-id"
+    assert page.result[0].card.set.set_id == "fixture-set-1"
 
 
 def test_dex_collection_contract_rejects_unexpected_envelope_fields() -> None:

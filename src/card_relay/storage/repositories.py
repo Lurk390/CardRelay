@@ -9,6 +9,8 @@ from card_relay.domain.models import (
     CanonicalCardIdentity,
     CanonicalCollection,
     DestinationCatalogRecord,
+    DestinationCollectionEntry,
+    DestinationReadSnapshot,
     SourceSnapshot,
 )
 from card_relay.domain.operations import SyncPlan, SyncResult
@@ -17,6 +19,7 @@ from card_relay.matching.normalization import normalize_destination_catalog
 from card_relay.storage.models import (
     CatalogCacheEntryRow,
     CatalogCacheStateRow,
+    DestinationReadSnapshotRow,
     MappingReviewRow,
     MappingRow,
     RejectedMappingRow,
@@ -284,6 +287,66 @@ class CatalogCacheRepository:
             if cached_at.tzinfo is None:
                 cached_at = cached_at.replace(tzinfo=UTC)
             return cached_at, records
+
+
+class DestinationReadRepository:
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+
+    def replace(self, snapshot: DestinationReadSnapshot) -> None:
+        catalog_payload = json.dumps(
+            [record.model_dump(mode="json") for record in snapshot.catalog],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        collection_payload = json.dumps(
+            [record.model_dump(mode="json") for record in snapshot.collection],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        with Session(self.engine) as session:
+            row = session.get(DestinationReadSnapshotRow, snapshot.destination_name)
+            if row is None:
+                session.add(
+                    DestinationReadSnapshotRow(
+                        destination_name=snapshot.destination_name,
+                        captured_at=snapshot.captured_at,
+                        catalog_payload=catalog_payload,
+                        collection_payload=collection_payload,
+                        complete=int(snapshot.complete),
+                        metadata_json=snapshot.metadata,
+                    )
+                )
+            else:
+                row.captured_at = snapshot.captured_at
+                row.catalog_payload = catalog_payload
+                row.collection_payload = collection_payload
+                row.complete = int(snapshot.complete)
+                row.metadata_json = snapshot.metadata
+            session.commit()
+
+    def get(self, destination: str) -> DestinationReadSnapshot | None:
+        with Session(self.engine) as session:
+            row = session.get(DestinationReadSnapshotRow, destination)
+            if row is None:
+                return None
+            captured_at = row.captured_at
+            if captured_at.tzinfo is None:
+                captured_at = captured_at.replace(tzinfo=UTC)
+            return DestinationReadSnapshot(
+                destination_name=row.destination_name,
+                captured_at=captured_at,
+                catalog=[
+                    DestinationCatalogRecord.model_validate(item)
+                    for item in json.loads(row.catalog_payload)
+                ],
+                collection=[
+                    DestinationCollectionEntry.model_validate(item)
+                    for item in json.loads(row.collection_payload)
+                ],
+                complete=bool(row.complete),
+                metadata=row.metadata_json,
+            )
 
 
 class SnapshotRepository:

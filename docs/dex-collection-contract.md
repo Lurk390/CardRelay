@@ -1,38 +1,38 @@
-# Dex collection read contract
+# Dex read-only contract
 
-This provisional contract is derived from a schema-only inspection of a user-controlled Dex
-collection page on 2026-07-17. The inspection retained property names, JSON types, and coarse array
-cardinality only. It did not retain URLs, response bodies, scalar values, account identifiers, or
-card data.
+This contract was established through schema-only inspection and a user-controlled live validation on 2026-07-18. No live response, account identifier, card name, token, URL containing user data, or real collection fixture is committed.
 
-The fictional fixtures are:
+## Verified workflow
 
-- `tests/fixtures/dex/collection_page_empty.json`
-- `tests/fixtures/dex/collection_page_one_card.json`
+Dex Collection and Search return paginated objects containing `page`, `pageSize`, `result`, `totalItems`, and `totalPages`. CardRelay captures them only after the user manually arms the relevant target in the extension. The observer derives a pagination request template from a request Dex already made and replays only its page parameter at a 200 ms interval. It does not guess or hard-code an undocumented endpoint.
 
-## Observed structure
+The live catalog completed at its visible 457-page total without scrolling. The extension retained the catalog in tab memory and transferred it to the loopback companion in ordered chunks of at most eight pages. The companion validated the complete page sequence and stored a read-only destination snapshot and catalog cache. Writes remained disabled.
 
-The response is a paginated object with `page`, `pageSize`, `result`, `totalItems`, and
-`totalPages`. A collection entry contains nested `card` catalog data, `cardId`, timestamps, an
-entry `id`, `userId`, and a `quantities` object. The observed single entry used a numeric `holo`
-quantity. Card catalog structure included card and set identifiers, collector number, variants,
-artist, rarity and regulation references, images, markets, and related catalog metadata.
+## Sanitized boundary model
 
-## Unresolved contract questions
+Only these fields cross from Dex into the companion:
 
-- The endpoint path and transport contract remain intentionally unrecorded.
-- Collection completeness and pagination behavior are not verified.
-- Only one populated entry and one `holo` quantity key were observed.
-- Other finishes, quantity keys, languages, conditions, editions, grading states, and games are
-  unverified.
-- Nested `market`, `region`, and `variant` object fields were beyond the bounded schema depth and
-  remain empty in the fictional fixture rather than being invented.
-- A provisional read-only transport model validates the observed page envelope, collection entry,
-  identity-bearing card and set fields, variant types, timestamps, and non-negative integer finish
-  quantities. It rejects unexpected page and entry fields while allowing additional nested catalog
-  metadata because the schema inspection was depth-bounded.
-- The transport model does not yet convert responses into canonical destination records.
-- No Dex write contract is known or enabled.
+- page number, page size, total items, and total pages;
+- card identifier, name, collector number, relational set identifier, and nested set name/public code;
+- outer variant role and nested variant finish name;
+- collection card identifier and non-negative integer quantity map.
 
-These fixtures are research contracts only. They must not authorize destructive planning or
-collection completeness claims.
+The observer strips account identifiers, timestamps, images, market data, URLs, and unrelated nested metadata. Collection pages use Chrome session storage only to survive navigation to Search. Catalog pages are never placed in extension storage.
+
+Dex uses `card.setId` as a relational identifier and nested `card.set.setId` as the public set code; equality between them is neither expected nor required. CardRelay uses the nested public code for canonical identity. Likewise, variant outer `type` values such as layout roles are not finish labels. CardRelay normalizes the nested variant name and reports unknown labels rather than guessing.
+
+## Completeness and persistence
+
+A capture is accepted only when every page from one through `totalPages` is present, page metadata is consistent, and the summed result count equals `totalItems`. Chunk identifiers, counts, and ordering must also be consistent. The aggregate upload is capped at 16 MiB.
+
+Supported finish labels become canonical destination catalog records. Unsupported catalog labels or collection quantity keys are returned as non-sensitive diagnostics and set `normalization_complete=false`; the stored destination snapshot is then incomplete. Zero quantities do not create collection records. A successful capture replaces the prior Dex read snapshot and refreshes the persistent Dex catalog cache.
+
+The fictional integration fixture is `tests/fixtures/dex/extension_capture.json`. It contains no live account or card data.
+
+## Known limits
+
+- Dex authentication remains entirely user-controlled in normal Chrome.
+- The extension is an unpacked development build.
+- Language, condition, edition, grading, and every possible finish label are not yet proven by the live sample. Unknown distinctions fail closed.
+- The destination adapter is read-only. Additions, increases, retries, confirmations, audit logs, and idempotent writes belong to Milestone 5 and require a separately verified write contract and design approval.
+- Quantity decreases and removals remain disabled regardless of capture completeness.

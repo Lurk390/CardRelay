@@ -53,6 +53,16 @@ class CatalogCacheEntryRow(Base):
     identity_json: Mapped[dict[str, object]] = mapped_column(JSON)
 
 
+class DestinationReadSnapshotRow(Base):
+    __tablename__ = "destination_read_snapshots"
+    destination_name: Mapped[str] = mapped_column(String(50), primary_key=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    catalog_payload: Mapped[str] = mapped_column(Text)
+    collection_payload: Mapped[str] = mapped_column(Text)
+    complete: Mapped[int] = mapped_column(Integer)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
 class SnapshotRow(Base):
     __tablename__ = "source_snapshots"
     snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)

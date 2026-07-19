@@ -14,7 +14,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/v1/collectr/captures`, {
+      const isDexChunk = message.capture?.contract_version === "dex-extension-chunk-v1";
+      const isDex = message.capture?.contract_version === "dex-extension-v1";
+      const capturePath = isDexChunk
+        ? "/v1/dex/capture-chunks"
+        : (isDex ? "/v1/dex/captures" : "/v1/collectr/captures");
+      const response = await fetch(`http://127.0.0.1:${port}${capturePath}`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${token}`,

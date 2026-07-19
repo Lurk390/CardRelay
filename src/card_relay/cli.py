@@ -13,6 +13,7 @@ from card_relay.browser.profile import (
 )
 from card_relay.config import load_settings
 from card_relay.destinations.base import DestinationAdapter
+from card_relay.destinations.dex import DexAdapter
 from card_relay.destinations.mock import FileBackedMockDestinationAdapter
 from card_relay.domain.enums import MatchStatus, OperationType
 from card_relay.domain.models import CanonicalCollection, DestinationCatalogRecord, SourceSnapshot
@@ -30,6 +31,7 @@ from card_relay.sources.collectr.csv_source import CollectrCsvSource
 from card_relay.storage.database import create_database
 from card_relay.storage.repositories import (
     CatalogCacheRepository,
+    DestinationReadRepository,
     MappingRepository,
     MappingReviewRepository,
     SnapshotRepository,
@@ -78,7 +80,7 @@ def doctor(as_json: Annotated[bool, typer.Option("--json")] = False) -> None:
             "data_directory": str(directory),
             "storage_writable": True,
             "browser_integration": "available",
-            "dex_integration": "scaffolded",
+            "dex_integration": "read_only",
         },
         as_json,
     )
@@ -336,6 +338,38 @@ def dex_session_status(
     )
 
 
+@dex_app.command("read-status")
+def dex_read_status(
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    snapshot = DestinationReadRepository(create_database(data_directory() / "card-relay.db")).get(
+        "dex"
+    )
+    if snapshot is None:
+        _emit(
+            {
+                "captured": False,
+                "authentication_status": "unknown",
+                "destination_writes_enabled": False,
+            },
+            as_json,
+        )
+        return
+    _emit(
+        {
+            "captured": True,
+            "captured_at": snapshot.captured_at.isoformat(),
+            "catalog_records": len(snapshot.catalog),
+            "collection_records": len(snapshot.collection),
+            "total_quantity": sum(entry.quantity for entry in snapshot.collection),
+            "normalization_complete": snapshot.complete,
+            "authentication_status": "capture_validated",
+            "destination_writes_enabled": False,
+        },
+        as_json,
+    )
+
+
 @dex_app.command("clear-session")
 def dex_clear_session(
     yes: Annotated[bool, typer.Option("--yes")] = False,
@@ -444,6 +478,14 @@ def _mock_workflow(
     return FileBackedMockDestinationAdapter(catalog, data_directory() / "mock" / "collection.json")
 
 
+def _destination_workflow(collection: CanonicalCollection, destination: str) -> DestinationAdapter:
+    if destination == "mock":
+        return _mock_workflow(collection, destination)
+    if destination == "dex":
+        return DexAdapter(create_database(data_directory() / "card-relay.db"))
+    raise typer.BadParameter(f"unsupported destination: {destination}")
+
+
 def _match_for_destination(
     collection: CanonicalCollection,
     adapter: DestinationAdapter,
@@ -471,9 +513,9 @@ def _match_for_destination(
 
 def _create_plan(
     source: CollectionSource, destination: str, policy: SyncPolicy | None = None
-) -> tuple[SyncPlan, FileBackedMockDestinationAdapter, SourceSnapshot]:
+) -> tuple[SyncPlan, DestinationAdapter, SourceSnapshot]:
     collection = source.load_collection()
-    adapter = _mock_workflow(collection, destination)
+    adapter = _destination_workflow(collection, destination)
     matches = _match_for_destination(collection, adapter, destination)
     effective_policy = policy or SyncPolicy()
     current_snapshot = source.create_snapshot()
@@ -526,7 +568,7 @@ def match(
 ) -> None:
     selected_source, source_name = _workflow_source(csv_path, browser, source)
     collection = selected_source.load_collection()
-    adapter = _mock_workflow(collection, destination)
+    adapter = _destination_workflow(collection, destination)
     results = _match_for_destination(collection, adapter, destination)
     counts = {status.value: 0 for status in MatchStatus}
     for result in results:

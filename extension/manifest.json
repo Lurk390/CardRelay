@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "CardRelay Collectr Bridge",
+  "name": "CardRelay Bridge",
   "version": "0.1.0",
-  "description": "Preview a Collectr portfolio in the local CardRelay companion.",
+  "description": "Preview Collectr and Dex data in the local CardRelay companion.",
   "permissions": ["activeTab", "storage"],
   "host_permissions": [
     "https://app.getcollectr.com/*",
+    "https://app.dextcg.com/*",
     "http://127.0.0.1/*"
   ],
   "background": {
@@ -25,6 +26,17 @@
     {
       "matches": ["https://app.getcollectr.com/*"],
       "js": ["content.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://app.dextcg.com/*"],
+      "js": ["dex-page-observer.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://app.dextcg.com/*"],
+      "js": ["dex-content.js"],
       "run_at": "document_start"
     }
   ]

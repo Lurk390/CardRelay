@@ -1,0 +1,57 @@
+{
+  "contract_version": "dex-extension-v1",
+  "collection_pages": [
+    {
+      "page": 1,
+      "pageSize": 20,
+      "result": [
+        {
+          "cardId": "fixture-card-1",
+          "card": {
+            "cardId": "fixture-card-1",
+            "name": "Fixturemon",
+            "number": "001",
+            "setId": "fixture-set-1",
+            "set": {
+              "id": "fixture-set-record-1",
+              "name": "Fixture Set",
+              "setId": "fixture-set-1"
+            },
+            "variants": [
+              {"type": "Normal"},
+              {"type": "Holo"}
+            ]
+          },
+          "quantities": {"holo": 1}
+        }
+      ],
+      "totalItems": 1,
+      "totalPages": 1
+    }
+  ],
+  "catalog_pages": [
+    {
+      "page": 1,
+      "pageSize": 20,
+      "result": [
+        {
+          "cardId": "fixture-card-1",
+          "name": "Fixturemon",
+          "number": "001",
+          "setId": "fixture-set-1",
+          "set": {
+            "id": "fixture-set-record-1",
+            "name": "Fixture Set",
+            "setId": "fixture-set-1"
+          },
+          "variants": [
+            {"type": "Normal"},
+            {"type": "Holo"}
+          ]
+        }
+      ],
+      "totalItems": 1,
+      "totalPages": 1
+    }
+  ]
+}

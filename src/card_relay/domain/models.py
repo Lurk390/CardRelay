@@ -125,6 +125,15 @@ class DestinationCollectionEntry(BaseModel):
     quantity: int = Field(ge=0)
 
 
+class DestinationReadSnapshot(BaseModel):
+    destination_name: str
+    captured_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    catalog: list[DestinationCatalogRecord]
+    collection: list[DestinationCollectionEntry]
+    complete: bool
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
 class SourceSnapshot(BaseModel):
     snapshot_id: str = Field(default_factory=lambda: str(uuid4()))
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

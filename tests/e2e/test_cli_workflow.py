@@ -7,10 +7,12 @@ from typer.testing import CliRunner
 from card_relay.cli import app
 from card_relay.destinations.mock import FileBackedMockDestinationAdapter
 from card_relay.domain.models import DestinationCatalogRecord
+from card_relay.extension.companion import process_dex_capture
 from card_relay.sources.collectr.browser_source import CollectrBrowserSource
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "collectr" / "alternate_export.csv"
 BROWSER_FIXTURES = Path(__file__).parents[1] / "fixtures" / "collectr"
+DEX_EXTENSION_FIXTURE = Path(__file__).parents[1] / "fixtures" / "dex" / "extension_capture.json"
 
 
 def test_cli_mock_sync_defaults_to_dry_run_and_is_idempotent(tmp_path: Path) -> None:
@@ -214,6 +216,56 @@ def test_dex_schema_inspection_requires_explicit_acknowledgement(tmp_path: Path)
     assert result.exit_code == 2
     plain_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     assert "--acknowledge-schema-inspection" in plain_output
+
+
+def test_dex_read_only_capture_supports_confirmed_dry_run_comparison(tmp_path: Path) -> None:
+    database_path = tmp_path / "card-relay.db"
+    process_dex_capture(
+        json.loads(DEX_EXTENSION_FIXTURE.read_text(encoding="utf-8")), database_path
+    )
+    source = tmp_path / "dex-source.csv"
+    source.write_text(
+        "Card,Set,Number,Quantity,Language,Finish\nFixturemon,Fixture Set,1,1,Unknown,Holo\n",
+        encoding="utf-8",
+    )
+    runner = CliRunner(env={"CARD_RELAY_DATA_DIRECTORY": str(tmp_path)})
+    common = ["--csv", str(source), "--destination", "dex", "--json"]
+
+    matched = runner.invoke(app, ["match", *common, "--details"])
+    assert matched.exit_code == 0
+    match_payload = json.loads(matched.stdout)
+    assert match_payload["matches"]["probable"] == 1
+    probable = match_payload["results"][0]
+    assert probable["candidate"]["destination_id"] == "fixture-card-1::holo"
+
+    confirmed = runner.invoke(
+        app,
+        [
+            "mappings",
+            "confirm",
+            probable["source_fingerprint"],
+            "fixture-card-1::holo",
+            "--destination",
+            "dex",
+        ],
+    )
+    assert confirmed.exit_code == 0
+
+    planned = runner.invoke(app, ["plan", *common])
+    assert planned.exit_code == 0
+    plan_payload = json.loads(planned.stdout)
+    assert plan_payload["operations"]["no_change"] == 1
+    assert plan_payload["executable_operations"] == 0
+
+    compared = runner.invoke(app, ["sync", *common])
+    assert compared.exit_code == 0
+    compare_payload = json.loads(compared.stdout)
+    assert compare_payload["dry_run"] is True
+    assert compare_payload["applied"] is False
+
+    status = runner.invoke(app, ["dex", "read-status", "--json"])
+    assert status.exit_code == 0
+    assert json.loads(status.stdout)["destination_writes_enabled"] is False
 
 
 def test_browser_source_can_apply_safe_additions_but_partial_omissions_stay_blocked(
