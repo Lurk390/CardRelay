@@ -5,6 +5,8 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from card_relay.cli import app
+from card_relay.destinations.mock import FileBackedMockDestinationAdapter
+from card_relay.domain.models import DestinationCatalogRecord
 from card_relay.sources.collectr.browser_source import CollectrBrowserSource
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "collectr" / "alternate_export.csv"
@@ -37,6 +39,69 @@ def test_cli_match_reports_exact_records(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0
     assert json.loads(result.stdout)["matches"]["exact"] == 2
+
+
+def test_cli_persists_probable_review_then_uses_confirmation(monkeypatch, tmp_path: Path) -> None:
+    def probable_mock(collection, destination):  # type: ignore[no-untyped-def]
+        assert destination == "mock"
+        catalog = [
+            DestinationCatalogRecord(
+                destination_id=f"candidate-{index}",
+                identity=entry.identity.model_copy(
+                    update={
+                        "card_name": (
+                            "embermous"
+                            if entry.identity.card_name == "embermouse"
+                            else entry.identity.card_name
+                        ),
+                        "set_code": ("MSP" if entry.identity.card_name == "embermouse" else None),
+                    }
+                ),
+            )
+            for index, entry in enumerate(collection.entries)
+        ]
+        return FileBackedMockDestinationAdapter(catalog, tmp_path / "mock-state.json")
+
+    monkeypatch.setattr("card_relay.cli._mock_workflow", probable_mock)
+    runner = CliRunner(env={"CARD_RELAY_DATA_DIRECTORY": str(tmp_path)})
+    command = ["match", "--csv", str(FIXTURE), "--destination", "mock", "--details", "--json"]
+
+    first = runner.invoke(app, command)
+    assert first.exit_code == 0
+    first_payload = json.loads(first.stdout)
+    assert first_payload["matches"]["probable"] == 1
+    assert first_payload["pending_review"] == 1
+    probable = next(result for result in first_payload["results"] if result["status"] == "probable")
+    assert probable["mismatched_fields"] == ["card_name"]
+
+    review = runner.invoke(app, ["mappings", "review", "--destination", "mock", "--json"])
+    assert review.exit_code == 0
+    review_payload = json.loads(review.stdout)
+    assert review_payload["count"] == 1
+    assert review_payload["pending"][0]["match"]["candidate_ids"] == ["candidate-0"]
+
+    confirm = runner.invoke(
+        app,
+        [
+            "mappings",
+            "confirm",
+            probable["source_fingerprint"],
+            "candidate-0",
+            "--destination",
+            "mock",
+        ],
+    )
+    assert confirm.exit_code == 0
+
+    second = runner.invoke(app, command)
+    assert second.exit_code == 0
+    second_payload = json.loads(second.stdout)
+    assert second_payload["matches"]["exact"] == 2
+    assert second_payload["pending_review"] == 0
+
+    cache = runner.invoke(app, ["catalog", "cache-status", "--destination", "mock", "--json"])
+    assert cache.exit_code == 0
+    assert json.loads(cache.stdout)["record_count"] == 2
 
 
 def test_yes_does_not_enable_quantity_decreases(tmp_path: Path) -> None:

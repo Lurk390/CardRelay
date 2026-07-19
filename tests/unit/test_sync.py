@@ -64,6 +64,23 @@ def test_default_policy_allows_increase_but_blocks_decrease() -> None:
     assert not operation.executable
 
 
+def test_probable_match_requires_review_before_addition() -> None:
+    source, destination, matches = setup(1, 0)
+    matches[0] = matches[0].model_copy(update={"status": MatchStatus.PROBABLE, "score": 0.98})
+
+    operation = build_plan(
+        source,
+        destination,
+        matches,
+        DestinationCapabilities(additions=True),
+        SyncPolicy(),
+    ).operations[0]
+
+    assert operation.operation_type is OperationType.MANUAL_REVIEW
+    assert not operation.executable
+    assert operation.reason == "match status: probable"
+
+
 def test_incomplete_source_blocks_explicit_destructive_policy() -> None:
     source, destination, matches = setup(1, 3, ExtractionCompleteness.INCOMPLETE)
     capabilities = DestinationCapabilities(quantity_decreases=True)

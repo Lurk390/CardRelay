@@ -12,10 +12,12 @@ from card_relay.browser.profile import (
     clear_browser_profile,
 )
 from card_relay.config import load_settings
+from card_relay.destinations.base import DestinationAdapter
 from card_relay.destinations.mock import FileBackedMockDestinationAdapter
 from card_relay.domain.enums import MatchStatus, OperationType
 from card_relay.domain.models import CanonicalCollection, DestinationCatalogRecord, SourceSnapshot
 from card_relay.domain.operations import SyncPlan
+from card_relay.domain.results import MatchResult
 from card_relay.exceptions import CardRelayError
 from card_relay.extension.companion import serve_companion
 from card_relay.matching import match_collection
@@ -27,7 +29,9 @@ from card_relay.sources.collectr.browser_source import CollectrBrowserSource
 from card_relay.sources.collectr.csv_source import CollectrCsvSource
 from card_relay.storage.database import create_database
 from card_relay.storage.repositories import (
+    CatalogCacheRepository,
     MappingRepository,
+    MappingReviewRepository,
     SnapshotRepository,
     SyncAuditRepository,
 )
@@ -40,11 +44,13 @@ app = typer.Typer(help="Sync your trading card collection from one source of tru
 collectr_app = typer.Typer(help="Collectr ingestion and browser-session commands.")
 config_app = typer.Typer(help="Configuration commands.")
 mappings_app = typer.Typer(help="Persistent mapping review commands.")
+catalog_app = typer.Typer(help="Destination catalog cache commands.")
 dex_app = typer.Typer(help="Dex read-only browser research commands.")
 extension_app = typer.Typer(help="Browser-extension companion commands.")
 app.add_typer(collectr_app, name="collectr")
 app.add_typer(config_app, name="config")
 app.add_typer(mappings_app, name="mappings")
+app.add_typer(catalog_app, name="catalog")
 app.add_typer(dex_app, name="dex")
 app.add_typer(extension_app, name="extension")
 
@@ -427,7 +433,7 @@ def _mock_workflow(
     collection: CanonicalCollection, destination: str
 ) -> FileBackedMockDestinationAdapter:
     if destination != "mock":
-        raise typer.BadParameter("only the mock destination is available in Milestone 1")
+        raise typer.BadParameter("only the mock destination is available before Milestone 4")
     catalog = [
         DestinationCatalogRecord(
             destination_id=f"mock:{entry.fingerprint.split(':', 1)[1][:16]}",
@@ -438,18 +444,37 @@ def _mock_workflow(
     return FileBackedMockDestinationAdapter(catalog, data_directory() / "mock" / "collection.json")
 
 
+def _match_for_destination(
+    collection: CanonicalCollection,
+    adapter: DestinationAdapter,
+    destination: str,
+) -> list[MatchResult]:
+    engine = create_database(data_directory() / "card-relay.db")
+    mappings = MappingRepository(engine)
+    catalog = adapter.fetch_catalog()
+    CatalogCacheRepository(engine).replace(destination, catalog)
+    matching = load_settings().matching
+    results = match_collection(
+        collection,
+        catalog,
+        mappings.list_confirmed(destination),
+        mappings.list_rejected(destination),
+        minimum_probable_score=matching.minimum_probable_score,
+        allow_fuzzy_matching=matching.allow_fuzzy_matching,
+        require_variant_match=matching.require_variant_match,
+        require_language_match=matching.require_language_match,
+        ambiguity_score_margin=matching.ambiguity_score_margin,
+    )
+    MappingReviewRepository(engine).update(destination, collection, results)
+    return results
+
+
 def _create_plan(
     source: CollectionSource, destination: str, policy: SyncPolicy | None = None
 ) -> tuple[SyncPlan, FileBackedMockDestinationAdapter, SourceSnapshot]:
     collection = source.load_collection()
     adapter = _mock_workflow(collection, destination)
-    mappings = MappingRepository(create_database(data_directory() / "card-relay.db"))
-    matches = match_collection(
-        collection,
-        adapter.fetch_catalog(),
-        mappings.list_confirmed(destination),
-        mappings.list_rejected(destination),
-    )
+    matches = _match_for_destination(collection, adapter, destination)
     effective_policy = policy or SyncPolicy()
     current_snapshot = source.create_snapshot()
     repository = SnapshotRepository(create_database(data_directory() / "card-relay.db"))
@@ -496,22 +521,27 @@ def match(
     browser: Annotated[bool, typer.Option("--browser")] = False,
     source: Annotated[str, typer.Option("--source")] = "collectr-csv",
     destination: Annotated[str, typer.Option("--destination")] = "mock",
+    details: Annotated[bool, typer.Option("--details")] = False,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     selected_source, source_name = _workflow_source(csv_path, browser, source)
     collection = selected_source.load_collection()
     adapter = _mock_workflow(collection, destination)
-    mappings = MappingRepository(create_database(data_directory() / "card-relay.db"))
-    results = match_collection(
-        collection,
-        adapter.fetch_catalog(),
-        mappings.list_confirmed(destination),
-        mappings.list_rejected(destination),
-    )
+    results = _match_for_destination(collection, adapter, destination)
     counts = {status.value: 0 for status in MatchStatus}
     for result in results:
         counts[result.status.value] += 1
-    _emit({"source": source_name, "destination": destination, "matches": counts}, as_json)
+    payload: dict[str, object] = {
+        "source": source_name,
+        "destination": destination,
+        "matches": counts,
+        "pending_review": sum(
+            result.status in {MatchStatus.PROBABLE, MatchStatus.AMBIGUOUS} for result in results
+        ),
+    }
+    if details:
+        payload["results"] = [result.model_dump(mode="json") for result in results]
+    _emit(payload, as_json)
 
 
 @app.command()
@@ -606,17 +636,12 @@ def mappings_list(
 
 @mappings_app.command("review")
 def mappings_review(
+    destination: Annotated[str | None, typer.Option("--destination")] = None,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    _emit(
-        {
-            "pending": [],
-            "message": (
-                "Probable and ambiguous review queue persistence is planned for Milestone 3."
-            ),
-        },
-        as_json,
-    )
+    repository = MappingReviewRepository(create_database(data_directory() / "card-relay.db"))
+    pending = repository.list_pending(destination)
+    _emit({"count": len(pending), "pending": pending}, as_json)
 
 
 @mappings_app.command("confirm")
@@ -639,6 +664,28 @@ def mappings_reject(
     repository = MappingRepository(create_database(data_directory() / "card-relay.db"))
     repository.reject(fingerprint, destination, destination_id)
     typer.echo("mapping rejected")
+
+
+@catalog_app.command("cache-status")
+def catalog_cache_status(
+    destination: Annotated[str, typer.Option("--destination")] = "mock",
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    repository = CatalogCacheRepository(create_database(data_directory() / "card-relay.db"))
+    cached = repository.get(destination)
+    if cached is None:
+        _emit({"destination": destination, "cached": False, "record_count": 0}, as_json)
+        return
+    cached_at, records = cached
+    _emit(
+        {
+            "destination": destination,
+            "cached": True,
+            "cached_at": cached_at.isoformat(),
+            "record_count": len(records),
+        },
+        as_json,
+    )
 
 
 def main() -> int:

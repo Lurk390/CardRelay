@@ -18,6 +18,41 @@ class MappingRow(Base):
     status: Mapped[str] = mapped_column(String(20), default="confirmed")
 
 
+class RejectedMappingRow(Base):
+    __tablename__ = "rejected_card_mappings"
+    __table_args__ = (UniqueConstraint("source_fingerprint", "destination_name", "destination_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_fingerprint: Mapped[str] = mapped_column(String(80))
+    destination_name: Mapped[str] = mapped_column(String(50))
+    destination_id: Mapped[str] = mapped_column(String(255))
+
+
+class MappingReviewRow(Base):
+    __tablename__ = "mapping_reviews"
+    __table_args__ = (UniqueConstraint("source_fingerprint", "destination_name"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_fingerprint: Mapped[str] = mapped_column(String(80))
+    destination_name: Mapped[str] = mapped_column(String(50))
+    source_identity_json: Mapped[dict[str, object]] = mapped_column(JSON)
+    result_payload: Mapped[str] = mapped_column(Text)
+
+
+class CatalogCacheStateRow(Base):
+    __tablename__ = "destination_catalog_cache_state"
+    destination_name: Mapped[str] = mapped_column(String(50), primary_key=True)
+    cached_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    record_count: Mapped[int] = mapped_column(Integer)
+
+
+class CatalogCacheEntryRow(Base):
+    __tablename__ = "destination_catalog_cache_entries"
+    __table_args__ = (UniqueConstraint("destination_name", "destination_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    destination_name: Mapped[str] = mapped_column(String(50))
+    destination_id: Mapped[str] = mapped_column(String(255))
+    identity_json: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
 class SnapshotRow(Base):
     __tablename__ = "source_snapshots"
     snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)

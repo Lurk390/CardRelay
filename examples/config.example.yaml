@@ -9,6 +9,12 @@ collectr:
       set_name: [set, set name, expansion]
       collector_number: [number, collector number, card number]
       quantity: [quantity, qty, count]
+matching:
+  minimum_probable_score: 0.92
+  ambiguity_score_margin: 0.02
+  allow_fuzzy_matching: true
+  require_variant_match: true
+  require_language_match: true
 sync:
   dry_run: true
   allow_additions: true

@@ -38,6 +38,7 @@ class CollectrConfig(BaseModel):
 
 class MatchingConfig(BaseModel):
     minimum_probable_score: float = Field(default=0.92, ge=0, le=1)
+    ambiguity_score_margin: float = Field(default=0.02, ge=0, le=1)
     allow_fuzzy_matching: bool = True
     require_variant_match: bool = True
     require_language_match: bool = True

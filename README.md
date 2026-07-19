@@ -6,7 +6,7 @@ CardRelay is an early open-source trading-card collection synchronization engine
 
 ## Current status
 
-Milestones 1 and 2 are implemented. The browser source provides a visible persistent Collectr session, verified portfolio discovery, structured response capture, infinite scrolling, embedded-data and DOM fallbacks, completeness diagnostics, sanitized fixtures, CSV equivalence tests, and browser snapshots. Browser extraction remains experimental: it can drive additions and quantity increases, but its separate reliability gate deliberately prevents decreases and removals. Dex remains scaffolded for later milestones.
+Milestones 1 through 3 are implemented. The browser source provides a visible persistent Collectr session, verified portfolio discovery, structured response capture, infinite scrolling, embedded-data and DOM fallbacks, completeness diagnostics, sanitized fixtures, CSV equivalence tests, and browser snapshots. Destination catalogs are canonically normalized and cached; constrained probable scoring, ambiguity review, match explanations, confirmed mappings, and multiple rejected candidates persist in SQLite. Browser extraction remains experimental: it can drive additions and quantity increases, but its separate reliability gate deliberately prevents decreases and removals. Dex remains scaffolded for Milestone 4.
 
 Safety defaults matter: every sync is a dry run, writes require explicit application action, ambiguous records are never applied, and decreases/removals remain blocked unless separately enabled with thresholds. Incomplete sources cannot authorize destructive operations.
 
@@ -109,6 +109,20 @@ uv run card-relay plan --csv tests/fixtures/collectr/plausible_export.csv --dest
 uv run card-relay sync --csv tests/fixtures/collectr/plausible_export.csv --destination mock
 ```
 
+## Matching review
+
+Exact canonical identities match automatically. A probable candidate must share exact game, set, and collector-number anchors and satisfy the configured language and variant gates. It still cannot sync until explicitly confirmed. Near-tied candidates are ambiguous and are never guessed.
+
+```bash
+uv run card-relay match --csv tests/fixtures/collectr/plausible_export.csv --destination mock --details --json
+uv run card-relay mappings review --destination mock --json
+uv run card-relay mappings confirm SOURCE_FINGERPRINT DESTINATION_ID --destination mock
+uv run card-relay mappings reject SOURCE_FINGERPRINT DESTINATION_ID --destination mock
+uv run card-relay catalog cache-status --destination mock --json
+```
+
+Match output explains scores, matched and mismatched fields, and alternatives. Rejections remain excluded on later runs; confirmations become exact persistent mappings. See [matching and persistent review](docs/matching.md) for the scoring weights, configuration, safety behavior, and SQLite cache semantics.
+
 An explicit local mock write remains limited to additions and quantity increases:
 
 ```bash
@@ -123,4 +137,4 @@ The browser source keeps private product payloads in memory only long enough to 
 
 Local snapshots may contain private collection metadata. Authentication state is never placed in snapshots and browser profiles remain local and ignored. Users are responsible for complying with each platform's terms; CardRelay does not bypass access controls, anti-bot systems, or rate limits.
 
-Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src`. Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Roadmap: demonstrate the browser reliability promotion gates, complete persistent matching review, add researched Dex read-only support, safe writes, controlled destructive sync, then more adapters and extension automation.
+Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src`. Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Roadmap: demonstrate the browser reliability promotion gates, add researched Dex read-only support, safe writes, controlled destructive sync, then more adapters and extension automation.

@@ -11,6 +11,14 @@ class SourceValidationResult(BaseModel):
     record_count: int = 0
 
 
+class MatchCandidateExplanation(BaseModel):
+    candidate: DestinationCatalogRecord
+    score: float = Field(ge=0, le=1)
+    reasons: list[str] = Field(default_factory=list)
+    matched_fields: list[str] = Field(default_factory=list)
+    mismatched_fields: list[str] = Field(default_factory=list)
+
+
 class MatchResult(BaseModel):
     source_fingerprint: str
     status: MatchStatus
@@ -20,3 +28,4 @@ class MatchResult(BaseModel):
     matched_fields: list[str] = Field(default_factory=list)
     mismatched_fields: list[str] = Field(default_factory=list)
     candidate_ids: list[str] = Field(default_factory=list)
+    alternatives: list[MatchCandidateExplanation] = Field(default_factory=list)
