@@ -48,6 +48,17 @@ def test_cli_match_reports_exact_records(tmp_path: Path) -> None:
     assert json.loads(result.stdout)["matches"]["exact"] == 2
 
 
+def test_cli_lists_destination_capabilities() -> None:
+    result = CliRunner().invoke(app, ["destinations", "--json"])
+
+    assert result.exit_code == 0
+    adapters = {item["name"]: item for item in json.loads(result.stdout)["adapters"]}
+    assert adapters["dex"]["stability"] == "read_only"
+    assert adapters["experimental"]["stability"] == "experimental"
+    assert adapters["experimental"]["capabilities"]["quantity_increases"] is True
+    assert adapters["experimental"]["capabilities"]["removals"] is False
+
+
 def test_csv_import_persists_normalized_collection_for_extension_diff(tmp_path: Path) -> None:
     runner = CliRunner(env={"CARD_RELAY_DATA_DIRECTORY": str(tmp_path)})
 

@@ -15,6 +15,7 @@ from card_relay.config import load_settings
 from card_relay.destinations.base import DestinationAdapter
 from card_relay.destinations.dex import DexAdapter
 from card_relay.destinations.mock import FileBackedMockDestinationAdapter
+from card_relay.destinations.registry import destination_descriptors
 from card_relay.domain.enums import MatchStatus, OperationType
 from card_relay.domain.models import (
     CanonicalCollection,
@@ -93,6 +94,22 @@ def doctor(as_json: Annotated[bool, typer.Option("--json")] = False) -> None:
         },
         as_json,
     )
+
+
+@app.command("destinations")
+def destinations(as_json: Annotated[bool, typer.Option("--json")] = False) -> None:
+    """List shipped destination adapters and their declared capabilities."""
+
+    adapters = [
+        {
+            "name": descriptor.name,
+            "stability": descriptor.stability,
+            "description": descriptor.description,
+            "capabilities": descriptor.capabilities.model_dump(mode="json"),
+        }
+        for descriptor in destination_descriptors()
+    ]
+    _emit({"adapters": adapters}, as_json)
 
 
 @config_app.command("path")

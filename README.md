@@ -164,4 +164,4 @@ The browser source keeps private product payloads in memory only long enough to 
 
 Local snapshots may contain private collection metadata. Authentication state is never placed in snapshots and browser profiles remain local and ignored. Users are responsible for complying with each platform's terms; CardRelay does not bypass access controls, anti-bot systems, or rate limits.
 
-Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src`. Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Roadmap: add separately approved Dex safe writes, controlled destructive sync, another destination adapter, and later extension automation.
+Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy src`. Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md). Use `card-relay destinations --json` to inspect the shipped adapter capabilities. Roadmap: controlled destructive sync after browser reliability gates are met, and later extension automation.
