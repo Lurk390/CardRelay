@@ -486,6 +486,7 @@ def test_extension_exposes_visual_diff_and_safe_write_controls() -> None:
     assert "Start 5-capture series" in html
     assert "collection_fingerprint" in popup
     assert "Copy evidence summary" in html
+    assert "Series started. Start and submit a complete Collectr capture to record run 1." in popup
     assert popup.index("await recordReliabilityCapture(result)") > popup.index(
         "const result = response.result"
     )

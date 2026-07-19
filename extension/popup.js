@@ -27,7 +27,10 @@ let latestSafeWritePreview = null;
 let reliabilitySeries = null;
 
 function reliabilitySummary(series) {
-  if (!series?.captures?.length) return "No reliability series is active.";
+  if (!series) return "No reliability series is active.";
+  if (!series.captures?.length) {
+    return "Capture series: 0/5\nSeries started. Start and submit a complete Collectr capture to record run 1.";
+  }
   const captures = series.captures;
   const first = captures[0];
   const fingerprintsMatch = captures.every(capture => capture.collection_fingerprint === first.collection_fingerprint);
