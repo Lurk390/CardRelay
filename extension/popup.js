@@ -134,18 +134,6 @@ function configureForService(service) {
   reliabilitySection.hidden = isDex;
 }
 
-startReliabilityButton.addEventListener("click", async () => {
-  try {
-    const { service } = await activeSupportedTab();
-    if (service !== "collectr") throw new Error("Open the Collectr portfolio before starting a series.");
-    reliabilitySeries = { version: 1, captures: [] };
-    await chrome.storage.local.set({ reliabilitySeries });
-    displayReliabilitySeries();
-  } catch (error) {
-    reliabilityStatus.textContent = error.message;
-  }
-});
-
 copyReliabilityButton.addEventListener("click", async () => {
   if (!reliabilitySeries?.captures?.length) return;
   const report = {
@@ -270,28 +258,46 @@ document.querySelector("#save").addEventListener("click", async () => {
   statusElement.textContent = "Pairing saved locally in this extension profile.";
 });
 
+async function startCapture() {
+  const { tab, service } = await activeSupportedTab();
+  if (service === "dex") {
+    const response = await sendToContentScript(tab, service, {
+      type: "card-relay-dex-start",
+      target: "collection"
+    });
+    if (!response?.ok) throw new Error("Unable to start Dex collection capture.");
+    displayDexStatus(response.status);
+    return;
+  }
+  const response = await sendToContentScript(tab, service, { type: "card-relay-start" });
+  if (!response?.ok) throw new Error("Unable to start capture. Reload Collectr and retry.");
+  if (response.navigateToProducts) {
+    await chrome.tabs.update(tab.id, { url: "https://app.getcollectr.com/portfolio/products" });
+    window.close();
+    return;
+  }
+  displayCollectrStatus(response.status);
+}
+
 startButton.addEventListener("click", async () => {
   try {
-    const { tab, service } = await activeSupportedTab();
-    if (service === "dex") {
-      const response = await sendToContentScript(tab, service, {
-        type: "card-relay-dex-start",
-        target: "collection"
-      });
-      if (!response?.ok) throw new Error("Unable to start Dex collection capture.");
-      displayDexStatus(response.status);
-      return;
-    }
-    const response = await sendToContentScript(tab, service, { type: "card-relay-start" });
-    if (!response?.ok) throw new Error("Unable to start capture. Reload Collectr and retry.");
-    if (response.navigateToProducts) {
-      await chrome.tabs.update(tab.id, { url: "https://app.getcollectr.com/portfolio/products" });
-      window.close();
-      return;
-    }
-    displayCollectrStatus(response.status);
+    await startCapture();
   } catch (error) {
     statusElement.textContent = error.message;
+  }
+});
+
+startReliabilityButton.addEventListener("click", async () => {
+  try {
+    const { service } = await activeSupportedTab();
+    if (service !== "collectr") throw new Error("Open the Collectr portfolio before starting a series.");
+    reliabilitySeries = { version: 1, captures: [] };
+    await chrome.storage.local.set({ reliabilitySeries });
+    displayReliabilitySeries();
+    statusElement.textContent = "Reliability series started. Beginning Collectr capture 1 of 5…";
+    await startCapture();
+  } catch (error) {
+    reliabilityStatus.textContent = error.message;
   }
 });
 
