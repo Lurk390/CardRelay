@@ -89,6 +89,7 @@ def test_extension_capture_reuses_browser_normalization_and_stores_snapshot(
     assert result.completeness == "complete"
     assert result.unique_entries == 3
     assert result.total_quantity == 4
+    assert len(result.collection_fingerprint) >= 16
     assert result.pagination_complete
     assert result.skipped_non_card_count == 1
     assert result.invalid_record_reasons.total == 0
@@ -153,6 +154,7 @@ def test_companion_requires_pairing_token_and_returns_only_preview(tmp_path: Pat
         payload = json.loads(accepted.read())
         assert accepted.status == 201
         assert payload["destination_writes_enabled"] is False
+        assert len(payload["collection_fingerprint"]) >= 16
         assert payload["trusted_for_destructive_planning"] is False
         assert payload["invalid_record_reasons"] == {
             "capture_error": 0,
@@ -481,6 +483,12 @@ def test_extension_exposes_visual_diff_and_safe_write_controls() -> None:
     assert "issue.location" in popup
     assert "payload.issues" in background
     assert "Request schema:" in popup
+    assert "Start 5-capture series" in html
+    assert "collection_fingerprint" in popup
+    assert "Copy evidence summary" in html
+    assert popup.index("await recordReliabilityCapture(result)") > popup.index(
+        "const result = response.result"
+    )
     assert "Apply safe Dex changes" in html
     assert "card-relay-safe-write-prepare" in popup
     assert "card-relay-dex-safe-write-execute" in popup

@@ -97,6 +97,7 @@ class CollectrExtensionCapture(BaseModel):
 
 class CompanionCaptureResult(BaseModel):
     snapshot_id: str
+    collection_fingerprint: str = Field(min_length=16, max_length=128)
     completeness: str
     unique_entries: int
     total_quantity: int
@@ -456,6 +457,7 @@ def process_collectr_capture(
     SourceCollectionRepository(engine).add(snapshot, collection)
     return CompanionCaptureResult(
         snapshot_id=snapshot.snapshot_id,
+        collection_fingerprint=snapshot.collection_fingerprint,
         completeness=collection.completeness.value,
         unique_entries=len(collection.entries),
         total_quantity=collection.total_quantity,

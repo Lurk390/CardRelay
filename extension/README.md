@@ -51,6 +51,14 @@ The popup reports page progress while the Products view scrolls. When capture is
 
 If Collectr neither requests nor has a valid cached condition or grading lookup during the capture, CardRelay keeps otherwise valid ungraded rows with an unknown condition and counts them as lossy. Graded rows without a recognized grading lookup are omitted rather than guessed. The popup reports reason-specific counts; the resulting preview is intentionally incomplete and cannot authorize destructive planning.
 
+## Milestone 6 reliability evidence
+
+The extension automates the repeatability portion of the reliability gates without collecting private card details. On a Collectr portfolio, select **Start 5-capture series**, then perform and submit five complete captures without changing that portfolio. The popup stores only each capture's canonical fingerprint, entry and quantity counts, completeness, pagination result, and invalid-record count in local extension storage. It reports whether all five fingerprints match and enables **Copy evidence summary** when at least one capture has completed.
+
+Run one series for each of three distinct, user-controlled portfolios, including the free-account path and one portfolio with at least 1,000 holdings. The series intentionally does not log in, switch portfolios, manipulate browser accounts, or treat a partial capture as evidence. Start a new series whenever you switch portfolios.
+
+The series is only one promotion gate. For two Pro portfolios, also produce a fresh CSV export without editing the portfolio between export and browser capture, and compare the canonical identity and quantity results. Finally, use **Dex write-contract research** to observe one manually performed, reversible decrease and one removal on a disposable test card. Copy the privacy-safe summaries and record the CSV comparison outcomes before asking to promote destructive-sync policy.
+
 ## Troubleshooting
 
 - If CardRelay says it is not active in a Collectr or Dex tab, the unpacked extension was likely reloaded after that page loaded. Reload the site tab once, then reopen CardRelay. When updating local extension code, always reload CardRelay first and the site tab second.
@@ -69,6 +77,7 @@ If Collectr neither requests nor has a valid cached condition or grading lookup 
 
 - The extension is an unpacked development build; it is not packaged or published.
 - Capture and preview are manual. Periodic checks and notifications are not implemented.
+- The reliability series automates local repeatability comparison; it does not replace the required multi-portfolio, CSV-equivalence, Dex-contract, or human operational review gates.
 - A complete capture requires contiguous 30-record pages, the empty terminal page, exact/unstacked records, recognized condition and grading metadata, and a visible-total match.
 - Browser snapshots can never authorize decreases or removals at this stage.
 - Mapping confirmations only resolve identity; they do not approve a write or destructive operation.

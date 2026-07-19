@@ -83,6 +83,10 @@ The token is stored only in this local Chrome extension profile. Restarting the 
 
 The companion validates the untrusted browser payload with the same Python contract and canonical parser used by the CLI. The popup then reports the snapshot ID, unique-entry count, total quantity, and completeness. Raw response bodies are discarded after validation; SQLite stores the normalized collection and snapshot metadata locally so it can build later diffs, never the extension's raw portfolio responses.
 
+### Reliability evidence for controlled destructive sync
+
+To validate browser repeatability, open a Collectr portfolio in the extension and select **Start 5-capture series**. Capture and submit that unchanged portfolio five times. CardRelay automatically compares the canonical fingerprints and reports whether every capture is complete with zero invalid records. **Copy evidence summary** exports only fingerprints, counts, and pass/fail diagnostics—not card details or browser credentials. Repeat this for each required user-controlled portfolio. This helper does not authorize destructive writes; follow [the reliability gates](docs/browser-source-reliability.md) for the required CSV-equivalence, Dex decrease/removal contract, and operational-review evidence.
+
 `complete` means the observed schema, 30-record pagination, empty terminal page, condition/grading metadata, and visible quantity total reconciled. Metadata may come from observed read responses or Collectr's two verified expiring cache entries; CardRelay never enumerates other browser storage. `incomplete` is still useful for observed additions and increases, but omitted cards remain unknown and cannot authorize decreases or removals.
 
 ### Troubleshooting the extension

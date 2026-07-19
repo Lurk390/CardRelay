@@ -33,7 +33,7 @@ h2 {
   font-size: 15px;
 }
 
-p, #status, #diff-summary, #review-summary, #write-research-status, #safe-write-status {
+p, #status, #diff-summary, #review-summary, #write-research-status, #safe-write-status, #reliability-status {
   color: #b7c2c6;
   font-size: 13px;
 }
@@ -47,6 +47,10 @@ p, #status, #diff-summary, #review-summary, #write-research-status, #safe-write-
 }
 
 #safe-write-status {
+  white-space: pre-line;
+}
+
+#reliability-status {
   white-space: pre-line;
 }
 

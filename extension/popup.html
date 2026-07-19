@@ -26,6 +26,13 @@
         <button id="refresh" class="secondary">Refresh status</button>
         <button id="send" disabled>Send preview to CardRelay</button>
       </section>
+      <section id="reliability-evidence">
+        <h2>Milestone 6 reliability evidence</h2>
+        <p>For the currently selected Collectr portfolio, record five complete captures without edits. This stores only counts, diagnostics, and a canonical fingerprint locally.</p>
+        <button id="start-reliability" class="secondary">Start 5-capture series</button>
+        <button id="copy-reliability" class="secondary" disabled>Copy evidence summary</button>
+        <div id="reliability-status" aria-live="polite">No reliability series is active.</div>
+      </section>
       <section>
         <h2>Collectr → Dex diff</h2>
         <button id="build-diff" class="secondary">Build visual diff</button>

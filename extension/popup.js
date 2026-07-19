@@ -19,7 +19,49 @@ const safeWriteSection = document.querySelector("#safe-write");
 const safeWriteConfirmation = document.querySelector("#safe-write-confirmation");
 const applySafeWriteButton = document.querySelector("#apply-safe-write");
 const safeWriteStatus = document.querySelector("#safe-write-status");
+const reliabilitySection = document.querySelector("#reliability-evidence");
+const startReliabilityButton = document.querySelector("#start-reliability");
+const copyReliabilityButton = document.querySelector("#copy-reliability");
+const reliabilityStatus = document.querySelector("#reliability-status");
 let latestSafeWritePreview = null;
+let reliabilitySeries = null;
+
+function reliabilitySummary(series) {
+  if (!series?.captures?.length) return "No reliability series is active.";
+  const captures = series.captures;
+  const first = captures[0];
+  const fingerprintsMatch = captures.every(capture => capture.collection_fingerprint === first.collection_fingerprint);
+  const complete = captures.every(capture => capture.completeness === "complete" &&
+    capture.invalid_record_count === 0 && capture.pagination_complete);
+  return [
+    `Capture series: ${captures.length}/5`,
+    `Canonical fingerprint: ${fingerprintsMatch ? "identical" : "CHANGED"}`,
+    `Completeness and diagnostics: ${complete ? "pass" : "needs review"}`,
+    `Entries/quantity: ${first.unique_entries}/${first.total_quantity}`,
+    captures.length === 5 && fingerprintsMatch && complete
+      ? "Repeatability evidence passed locally. Run CSV equivalence separately."
+      : "Start another capture from the same unchanged portfolio, then send its preview."
+  ].join("\n");
+}
+
+function displayReliabilitySeries() {
+  reliabilityStatus.textContent = reliabilitySummary(reliabilitySeries);
+  copyReliabilityButton.disabled = !reliabilitySeries?.captures?.length;
+}
+
+async function recordReliabilityCapture(result) {
+  if (!reliabilitySeries || reliabilitySeries.captures.length >= 5) return;
+  reliabilitySeries.captures.push({
+    collection_fingerprint: result.collection_fingerprint,
+    completeness: result.completeness,
+    unique_entries: result.unique_entries,
+    total_quantity: result.total_quantity,
+    pagination_complete: result.pagination_complete,
+    invalid_record_count: result.invalid_record_count
+  });
+  await chrome.storage.local.set({ reliabilitySeries });
+  displayReliabilitySeries();
+}
 
 async function activeSupportedTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -86,7 +128,35 @@ function configureForService(service) {
   catalogButton.hidden = !isDex;
   writeResearchSection.hidden = !isDex;
   sendButton.textContent = isDex ? "Send Dex read-only preview" : "Send preview to CardRelay";
+  reliabilitySection.hidden = isDex;
 }
+
+startReliabilityButton.addEventListener("click", async () => {
+  try {
+    const { service } = await activeSupportedTab();
+    if (service !== "collectr") throw new Error("Open the Collectr portfolio before starting a series.");
+    reliabilitySeries = { version: 1, captures: [] };
+    await chrome.storage.local.set({ reliabilitySeries });
+    displayReliabilitySeries();
+  } catch (error) {
+    reliabilityStatus.textContent = error.message;
+  }
+});
+
+copyReliabilityButton.addEventListener("click", async () => {
+  if (!reliabilitySeries?.captures?.length) return;
+  const report = {
+    report: "CardRelay Milestone 6 browser repeatability evidence",
+    captures: reliabilitySeries.captures,
+    result: reliabilitySummary(reliabilitySeries)
+  };
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+    reliabilityStatus.textContent = `${reliabilitySummary(reliabilitySeries)}\nEvidence summary copied.`;
+  } catch {
+    reliabilityStatus.textContent = "Unable to copy the evidence summary. Keep the popup open and retry.";
+  }
+});
 
 armWriteResearchButton.addEventListener("click", async () => {
   try {
@@ -475,6 +545,7 @@ sendButton.addEventListener("click", async () => {
       ].join("\n");
       return;
     }
+    await recordReliabilityCapture(result);
     const invalidReasons = Object.entries(result.invalid_record_reasons || {})
       .filter(([, count]) => count > 0)
       .map(([reason, count]) => `  ${reason.replaceAll("_", " ")}: ${count}`);
@@ -496,5 +567,10 @@ sendButton.addEventListener("click", async () => {
 chrome.storage.local.get(["companionPort", "pairingToken"]).then(settings => {
   portInput.value = settings.companionPort || 8765;
   tokenInput.value = settings.pairingToken || "";
+});
+chrome.storage.local.get(["reliabilitySeries"]).then(settings => {
+  const series = settings.reliabilitySeries;
+  if (series?.version === 1 && Array.isArray(series.captures)) reliabilitySeries = series;
+  displayReliabilitySeries();
 });
 void refreshStatus();
