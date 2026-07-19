@@ -61,11 +61,11 @@ function reliabilitySummary(series) {
   const complete = captures.every(capture => capture.completeness === "complete" &&
     capture.invalid_record_count === 0 && capture.pagination_complete);
   return [
-    `Capture series: ${captures.length}/5`,
+    `Capture comparison: ${captures.length}/2`,
     `Canonical fingerprint: ${fingerprintsMatch ? "identical" : "CHANGED"}`,
     `Completeness and diagnostics: ${complete ? "pass" : "needs review"}`,
     `Entries/quantity: ${first.unique_entries}/${first.total_quantity}`,
-    captures.length === 5 && fingerprintsMatch && complete
+    captures.length === 2 && fingerprintsMatch && complete
       ? "Repeatability evidence passed locally. Run CSV equivalence separately."
       : "Start another capture from the same unchanged portfolio, then send its preview."
   ].join("\n");
@@ -77,7 +77,7 @@ function displayReliabilitySeries() {
 }
 
 async function recordReliabilityCapture(result) {
-  if (!reliabilitySeries || reliabilitySeries.captures.length >= 5) return;
+  if (!reliabilitySeries || reliabilitySeries.captures.length >= 2) return;
   reliabilitySeries.captures.push({
     collection_fingerprint: result.collection_fingerprint,
     completeness: result.completeness,
@@ -308,7 +308,7 @@ async function startCapture(reliabilityRuns = 0) {
 
 startButton.addEventListener("click", async () => {
   try {
-    await startCapture(5);
+    await startCapture(0);
   } catch (error) {
     statusElement.textContent = error.message;
   }

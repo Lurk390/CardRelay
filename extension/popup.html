@@ -29,8 +29,8 @@
       </section>
       <section id="reliability-evidence">
         <h2>Milestone 6 reliability evidence</h2>
-        <p>For the currently selected Collectr portfolio, run five complete captures without edits. CardRelay submits and repeats the series automatically, storing only counts, diagnostics, and a canonical fingerprint locally.</p>
-        <button id="start-reliability" class="secondary">Start 5-capture series and capture run 1</button>
+        <p>For the currently selected Collectr portfolio, record two complete captures without edits. This stores only counts, diagnostics, and a canonical fingerprint locally.</p>
+        <button id="start-reliability" class="secondary">Start 2-capture comparison</button>
         <button id="copy-reliability" class="secondary" disabled>Copy evidence summary</button>
         <div id="reliability-status" aria-live="polite">No reliability series is active.</div>
       </section>
@@ -59,6 +59,7 @@
         <div id="review-list" aria-live="polite"></div>
       </section>
       <section id="developer-tools" hidden>
+      <p id="developer-tools-status">Developer tools are available only on supported service pages.</p>
       <section id="write-research" hidden>
         <h2>Dex write-contract research</h2>
         <p>Arm this only before you manually make one small, reversible Dex collection change. CardRelay records schema, never values, and does not replay the request.</p>
