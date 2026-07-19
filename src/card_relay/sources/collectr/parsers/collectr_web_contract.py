@@ -10,6 +10,7 @@ from card_relay.exceptions import SourceValidationError
 from card_relay.sources.collectr.parsers.browser_fixture_parser import (
     BrowserCaptureBatch,
     BrowserCaptureEnvelope,
+    BrowserCaptureIssue,
     BrowserCaptureRecord,
     BrowserCaptureStrategy,
     BrowserInvalidRecordCounts,
@@ -89,6 +90,7 @@ def build_capture_from_collectr_responses(
     skipped_non_card_count = 0
     terminal_page_seen = False
     source_schema_fields: set[str] = set()
+    capture_issues: list[BrowserCaptureIssue] = []
 
     for raw_payload in payloads:
         try:
@@ -128,6 +130,19 @@ def build_capture_from_collectr_responses(
                 invalid_count += 1
                 if invalid_reason is not None:
                     invalid_reasons[invalid_reason] = invalid_reasons.get(invalid_reason, 0) + 1
+                    if invalid_reason == "missing_identity" and len(capture_issues) < 10:
+                        capture_issues.append(
+                            BrowserCaptureIssue(
+                                reason="missing_identity",
+                                card_name=product.product_name,
+                                set_name=product.catalog_group,
+                                collector_number=product.card_number,
+                            guidance=(
+                                "Select the correct Collectr printing with a collector number, "
+                                "or remove and re-add this holding from the catalog."
+                            ),
+                            )
+                        )
                 continue
             if invalid_reason is not None:
                 invalid_count += 1
@@ -156,6 +171,7 @@ def build_capture_from_collectr_responses(
         invalid_record_reasons=BrowserInvalidRecordCounts.model_validate(invalid_reasons),
         skipped_non_card_count=skipped_non_card_count,
         source_schema_fields=sorted(source_schema_fields),
+        capture_issues=capture_issues,
     )
 
 

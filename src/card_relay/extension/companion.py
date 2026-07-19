@@ -109,6 +109,7 @@ class CompanionCaptureResult(BaseModel):
     trusted_for_destructive_planning: Literal[False] = False
     destination_writes_enabled: Literal[False] = False
     warnings: list[str]
+    capture_issues: list[dict[str, object]] = Field(default_factory=list, max_length=10)
 
 
 class DexExtensionCapture(BaseModel):
@@ -467,6 +468,7 @@ def process_collectr_capture(
         skipped_watchlist_count=diagnostics.skipped_watchlist_count,
         skipped_non_card_count=diagnostics.skipped_non_card_count,
         warnings=diagnostics.warnings,
+        capture_issues=[issue.model_dump() for issue in diagnostics.capture_issues],
     )
 
 

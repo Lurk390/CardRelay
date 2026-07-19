@@ -9,7 +9,8 @@
   <body>
     <header>
       <h1>CardRelay</h1>
-      <p>Collectr and Dex preview bridge</p>
+      <p>Preview your Collectr collection before syncing.</p>
+      <button id="developer-toggle" class="secondary">Developer tools</button>
     </header>
     <main>
       <section>
@@ -33,6 +34,10 @@
         <button id="copy-reliability" class="secondary" disabled>Copy evidence summary</button>
         <div id="reliability-status" aria-live="polite">No reliability series is active.</div>
       </section>
+      <section id="capture-issues" hidden>
+        <h2>Capture issues</h2>
+        <div id="capture-issues-list" aria-live="polite"></div>
+      </section>
       <section>
         <h2>Collectr → Dex diff</h2>
         <button id="build-diff" class="secondary">Build visual diff</button>
@@ -53,6 +58,7 @@
         <div id="review-summary">Build the diff to load probable and ambiguous matches.</div>
         <div id="review-list" aria-live="polite"></div>
       </section>
+      <section id="developer-tools" hidden>
       <section id="write-research" hidden>
         <h2>Dex write-contract research</h2>
         <p>Arm this only before you manually make one small, reversible Dex collection change. CardRelay records schema, never values, and does not replay the request.</p>
@@ -60,6 +66,7 @@
         <button id="submit-write-research" class="secondary" disabled>Validate observed schema</button>
         <div id="write-research-status">No write observation is armed.</div>
         <div id="write-research-results" aria-live="polite"></div>
+      </section>
       </section>
     </main>
     <script src="popup.js"></script>

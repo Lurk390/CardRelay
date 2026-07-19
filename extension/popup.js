@@ -23,8 +23,32 @@ const reliabilitySection = document.querySelector("#reliability-evidence");
 const startReliabilityButton = document.querySelector("#start-reliability");
 const copyReliabilityButton = document.querySelector("#copy-reliability");
 const reliabilityStatus = document.querySelector("#reliability-status");
+const developerToggle = document.querySelector("#developer-toggle");
+const developerTools = document.querySelector("#developer-tools");
+const captureIssues = document.querySelector("#capture-issues");
+const captureIssuesList = document.querySelector("#capture-issues-list");
 let latestSafeWritePreview = null;
 let reliabilitySeries = null;
+let developerToolsEnabled = false;
+
+developerToggle.addEventListener("click", async () => {
+  developerToolsEnabled = !developerToolsEnabled;
+  await chrome.storage.local.set({ developerToolsEnabled });
+  developerTools.hidden = !developerToolsEnabled;
+  developerToggle.textContent = developerToolsEnabled ? "Hide developer tools" : "Developer tools";
+});
+
+function displayCaptureIssues(issues) {
+  captureIssuesList.replaceChildren();
+  const visible = (issues || []).slice(0, 10);
+  captureIssues.hidden = visible.length === 0;
+  for (const issue of visible) {
+    const item = document.createElement("div");
+    item.className = "research-result";
+    item.textContent = `${issue.reason}: ${issue.card_name} · ${issue.set_name || "Unknown set"}${issue.collector_number ? ` #${issue.collector_number}` : ""}\n${issue.guidance}`;
+    captureIssuesList.append(item);
+  }
+}
 
 function reliabilitySummary(series) {
   if (!series) return "No reliability series is active.";
@@ -558,6 +582,7 @@ sendButton.addEventListener("click", async () => {
       return;
     }
     await recordReliabilityCapture(result);
+    displayCaptureIssues(result.capture_issues);
     const invalidReasons = Object.entries(result.invalid_record_reasons || {})
       .filter(([, count]) => count > 0)
       .map(([reason, count]) => `  ${reason.replaceAll("_", " ")}: ${count}`);
@@ -576,9 +601,12 @@ sendButton.addEventListener("click", async () => {
   }
 });
 
-chrome.storage.local.get(["companionPort", "pairingToken"]).then(settings => {
+chrome.storage.local.get(["companionPort", "pairingToken", "developerToolsEnabled"]).then(settings => {
   portInput.value = settings.companionPort || 8765;
   tokenInput.value = settings.pairingToken || "";
+  developerToolsEnabled = settings.developerToolsEnabled === true;
+  developerTools.hidden = !developerToolsEnabled;
+  developerToggle.textContent = developerToolsEnabled ? "Hide developer tools" : "Developer tools";
 });
 chrome.storage.local.get(["reliabilitySeries"]).then(settings => {
   const series = settings.reliabilitySeries;

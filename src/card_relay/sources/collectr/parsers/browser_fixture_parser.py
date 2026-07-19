@@ -77,6 +77,14 @@ class BrowserInvalidRecordCounts(BaseModel):
         return sum(int(value) for value in self.model_dump().values())
 
 
+class BrowserCaptureIssue(BaseModel):
+    reason: Literal["missing_identity", "conflicting_condition"]
+    card_name: str = Field(min_length=1, max_length=200)
+    set_name: str | None = Field(default=None, max_length=200)
+    collector_number: str | None = Field(default=None, max_length=100)
+    guidance: str = Field(min_length=1, max_length=300)
+
+
 class BrowserCaptureEnvelope(BaseModel):
     contract_version: Literal["collectr-browser-v1"]
     strategy: BrowserCaptureStrategy
@@ -91,6 +99,7 @@ class BrowserCaptureEnvelope(BaseModel):
     skipped_non_card_count: int = Field(default=0, ge=0)
     source_schema_fields: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    capture_issues: list[BrowserCaptureIssue] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
     def batch_numbers_are_unique_and_ordered(self) -> "BrowserCaptureEnvelope":
@@ -126,6 +135,7 @@ class BrowserExtractionDiagnostics(BaseModel):
     )
     skipped_non_card_count: int = Field(default=0, ge=0)
     warnings: list[str] = Field(default_factory=list)
+    capture_issues: list[BrowserCaptureIssue] = Field(default_factory=list, max_length=10)
 
     @property
     def completeness_checks_passed(self) -> bool:
@@ -190,6 +200,7 @@ class CollectrBrowserParser:
         duplicate_count = 0
         lossy_record_count = 0
         skipped_watchlist_count = 0
+        capture_issues: list[BrowserCaptureIssue] = list(capture.capture_issues)
         warnings = list(capture.warnings)
 
         for batch in capture.batches:
@@ -219,6 +230,18 @@ class CollectrBrowserParser:
                         and previous.condition != entry.condition
                     )
                     if conditions_conflict:
+                        capture_issues.append(
+                            BrowserCaptureIssue(
+                                reason="conflicting_condition",
+                                card_name=entry.identity.card_name,
+                                set_name=entry.identity.set_name,
+                                collector_number=entry.identity.collector_number,
+                            guidance=(
+                                "Use one condition for this combined holding, or correct its "
+                                "printing, finish, language, edition, or grading details."
+                            ),
+                            )
+                        )
                         lossy_record_count += 1
                         warnings.append(
                             "combined a duplicate browser identity with multiple conditions; "
@@ -288,6 +311,7 @@ class CollectrBrowserParser:
             entries=list(aggregated.values()),
             completeness=completeness,
             warnings=warnings,
+            capture_issues=capture_issues[:10],
         )
         diagnostics = BrowserExtractionDiagnostics(
             completeness=completeness,
