@@ -137,10 +137,10 @@ def build_capture_from_collectr_responses(
                                 card_name=product.product_name,
                                 set_name=product.catalog_group,
                                 collector_number=product.card_number,
-                            guidance=(
-                                "Select the correct Collectr printing with a collector number, "
-                                "or remove and re-add this holding from the catalog."
-                            ),
+                                guidance=(
+                                    "Select the correct Collectr printing with a collector number, "
+                                    "or remove and re-add this holding from the catalog."
+                                ),
                             )
                         )
                 continue

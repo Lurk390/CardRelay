@@ -236,10 +236,10 @@ class CollectrBrowserParser:
                                 card_name=entry.identity.card_name,
                                 set_name=entry.identity.set_name,
                                 collector_number=entry.identity.collector_number,
-                            guidance=(
-                                "Use one condition for this combined holding, or correct its "
-                                "printing, finish, language, edition, or grading details."
-                            ),
+                                guidance=(
+                                    "Use one condition for this combined holding, or correct its "
+                                    "printing, finish, language, edition, or grading details."
+                                ),
                             )
                         )
                         lossy_record_count += 1
