@@ -6,6 +6,8 @@ const statusElement = document.querySelector("#status");
 const startButton = document.querySelector("#start");
 const catalogButton = document.querySelector("#start-catalog");
 const sendButton = document.querySelector("#send");
+const diffSummary = document.querySelector("#diff-summary");
+const diffList = document.querySelector("#diff-list");
 
 async function activeSupportedTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -127,6 +129,48 @@ catalogButton.addEventListener("click", async () => {
 });
 
 document.querySelector("#refresh").addEventListener("click", refreshStatus);
+
+function displaySyncPreview(result) {
+  const counts = result.change_counts || {};
+  const visibleChanges = (result.changes || []).filter(change => change.change !== "no_change");
+  diffSummary.textContent = [
+    `Adds: ${counts.add_card || 0} · Increases: ${counts.increase_quantity || 0}`,
+    `Decreases: ${counts.decrease_quantity || 0} · Removals: ${counts.remove_card || 0}`,
+    `Review/blocked: ${(counts.manual_review_required || 0) + (counts.unsupported_operation || 0)}`,
+    result.truncated ? "The displayed list is truncated." : "All changes are displayed.",
+    "Writes are disabled until the Dex write contract is separately verified."
+  ].join("\n");
+  diffList.replaceChildren();
+  for (const change of visibleChanges.slice(0, 250)) {
+    const item = document.createElement("div");
+    const destructive = ["decrease_quantity", "remove_card"].includes(change.change);
+    const safe = ["add_card", "increase_quantity"].includes(change.change);
+    item.className = `diff-item ${destructive ? "destructive" : (safe ? "safe" : "blocked")}`;
+    const title = document.createElement("div");
+    title.className = "diff-title";
+    title.textContent = `${change.card} · ${change.set || change.set_code || "Unknown set"} #${change.collector_number}`;
+    const detail = document.createElement("div");
+    detail.className = "diff-detail";
+    detail.textContent = `${change.change.replaceAll("_", " ")}: Dex ${change.current_quantity} → Collectr ${change.collectr_quantity}`;
+    item.append(title, detail);
+    diffList.append(item);
+  }
+}
+
+document.querySelector("#build-diff").addEventListener("click", async () => {
+  diffSummary.textContent = "Building the Collectr → Dex diff…";
+  diffList.replaceChildren();
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "card-relay-sync-preview" });
+    if (!response?.ok) {
+      diffSummary.textContent = `Diff unavailable: ${response?.error || "unknown error"}`;
+      return;
+    }
+    displaySyncPreview(response.result);
+  } catch {
+    diffSummary.textContent = "Diff unavailable: companion unavailable";
+  }
+});
 
 sendButton.addEventListener("click", async () => {
   sendButton.disabled = true;

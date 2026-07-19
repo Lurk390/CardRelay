@@ -63,6 +63,32 @@ class DestinationReadSnapshotRow(Base):
     metadata_json: Mapped[dict[str, object]] = mapped_column(JSON)
 
 
+class DestinationBackupSnapshotRow(Base):
+    __tablename__ = "destination_backup_snapshots"
+    backup_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    destination_name: Mapped[str] = mapped_column(String(50), index=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    plan_confirmation_code: Mapped[str] = mapped_column(String(20))
+    collection_payload: Mapped[str] = mapped_column(Text)
+
+
+class ManagedDestinationRecordRow(Base):
+    __tablename__ = "managed_destination_records"
+    destination_name: Mapped[str] = mapped_column(String(50), primary_key=True)
+    destination_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    source_fingerprint: Mapped[str] = mapped_column(String(80))
+    identity_json: Mapped[dict[str, object]] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SourceCollectionSnapshotRow(Base):
+    __tablename__ = "source_collection_snapshots"
+    snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source_application: Mapped[str] = mapped_column(String(50), index=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    collection_payload: Mapped[str] = mapped_column(Text)
+
+
 class SnapshotRow(Base):
     __tablename__ = "source_snapshots"
     snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)

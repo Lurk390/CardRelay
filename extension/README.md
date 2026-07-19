@@ -27,9 +27,11 @@ This unpacked Manifest V3 extension captures Collectr source data and Dex read-o
 
 Dex catalog pages stay only in the current tab's memory. Sanitized collection pages use session storage so navigation does not discard them. Submission is split into small, ordered loopback requests; the companion rejects gaps, reordered chunks, incomplete pagination, conflicting totals, oversized captures, and changed schemas. A successful preview stores normalized counts and reports unsupported finish labels without exposing card data. Dex writes remain disabled.
 
+After storing both a Collectr capture and a Dex capture, select **Build visual diff**. The popup groups additions and increases separately from decreases and removals, shows Dex and Collectr quantities for each card, and highlights unresolved or unmanaged records. The companion returns at most 2,000 changes and the popup renders at most 250 at once; summary counts cover the full plan and truncation is explicit. This view is informational while Dex writes remain disabled.
+
 After editing extension files, use **Reload** on the extension card at `chrome://extensions` and reload open Collectr or Dex tabs. A content-script-unavailable message almost always means the active tab predates the latest extension load.
 
-The pairing token is ephemeral: restarting the companion produces a new token. Private product response bodies remain in the tab until submission and are not written to extension storage. Bounded condition and grading lookup responses are kept in session storage so navigation cannot discard the metadata needed for safe normalization; Chrome clears that state with the browser session. If the Collectr client already cached those dictionaries, the page observer reads only its verified `cardConditions` and `gradedCardScales` entries, never arbitrary local storage. The companion validates captures with CardRelay's existing Collectr parser and stores only the source snapshot metadata already used by the CLI.
+The pairing token is ephemeral: restarting the companion produces a new token. Private product response bodies remain in the tab until submission and are not written to extension storage. Bounded condition and grading lookup responses are kept in session storage so navigation cannot discard the metadata needed for safe normalization; Chrome clears that state with the browser session. If the Collectr client already cached those dictionaries, the page observer reads only its verified `cardConditions` and `gradedCardScales` entries, never arbitrary local storage. The companion validates captures with CardRelay's existing Collectr parser and stores the canonical collection plus snapshot metadata in local SQLite for later diff generation; it does not store the raw browser payload.
 
 Rejected previews identify only the safe validation stage (`json`, `contract`, or `source`); CardRelay never returns or logs the offending private payload.
 
@@ -55,4 +57,5 @@ If Collectr neither requests nor has a valid cached condition or grading lookup 
 - Capture and preview are manual. Periodic checks and notifications are not implemented.
 - A complete capture requires contiguous 30-record pages, the empty terminal page, exact/unstacked records, recognized condition and grading metadata, and a visible-total match.
 - Browser snapshots can never authorize decreases or removals at this stage.
+- The visual diff has no write-confirmation control until all Dex write contracts and read-after-write checks are verified.
 - The popup cannot write to Dex or any other destination.

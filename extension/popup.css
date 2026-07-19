@@ -6,7 +6,7 @@
 }
 
 body {
-  width: 340px;
+  width: 430px;
   margin: 0;
 }
 
@@ -20,7 +20,7 @@ header {
   background: #151b1e;
 }
 
-h1, p {
+h1, h2, p {
   margin: 0;
 }
 
@@ -29,9 +29,49 @@ h1 {
   font-size: 22px;
 }
 
-p, #status {
+h2 {
+  font-size: 15px;
+}
+
+p, #status, #diff-summary {
   color: #b7c2c6;
   font-size: 13px;
+}
+
+#diff-list {
+  display: grid;
+  gap: 7px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.diff-item {
+  padding: 8px;
+  border-left: 3px solid #79878d;
+  border-radius: 5px;
+  background: #0d1012;
+  font-size: 12px;
+}
+
+.diff-item.safe {
+  border-left-color: #3de0ca;
+}
+
+.diff-item.destructive {
+  border-left-color: #ff6b6b;
+}
+
+.diff-item.blocked {
+  border-left-color: #f5bf42;
+}
+
+.diff-title {
+  font-weight: 700;
+}
+
+.diff-detail {
+  margin-top: 3px;
+  color: #b7c2c6;
 }
 
 #status {

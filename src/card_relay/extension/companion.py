@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
+from card_relay.destinations.dex.adapter import DexAdapter
 from card_relay.destinations.dex.models import (
     DexCapturedCatalogPage,
     DexCapturedCollectionPage,
@@ -18,8 +19,10 @@ from card_relay.destinations.dex.normalizer import (
     normalize_dex_catalog,
     normalize_dex_collection,
 )
+from card_relay.domain.enums import OperationType
 from card_relay.domain.models import DestinationReadSnapshot
 from card_relay.exceptions import CardRelayError, SourceValidationError
+from card_relay.matching import match_collection
 from card_relay.sources.collectr.browser_capture import (
     extract_condition_names,
     extract_grade_details,
@@ -34,11 +37,22 @@ from card_relay.storage.database import create_database
 from card_relay.storage.repositories import (
     CatalogCacheRepository,
     DestinationReadRepository,
+    ManagedDestinationRepository,
+    MappingRepository,
+    MappingReviewRepository,
     SnapshotRepository,
+    SourceCollectionRepository,
 )
+from card_relay.sync.planner import build_plan
+from card_relay.sync.policy import SyncPolicy
+from card_relay.sync.preview import SyncPreviewChange, preview_changes
 
 MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 PRODUCT_PAGE_SIZE = 30
+
+
+class SyncPreviewUnavailable(CardRelayError):
+    pass
 
 
 class ExtensionProductPage(BaseModel):
@@ -131,6 +145,18 @@ class DexCompanionCaptureResult(BaseModel):
     destination_writes_enabled: Literal[False] = False
 
 
+class CompanionSyncPreviewResult(BaseModel):
+    destination: Literal["dex"] = "dex"
+    source_completeness: str
+    changes: list[SyncPreviewChange]
+    change_counts: dict[str, int]
+    blocked_changes: int
+    truncated: bool
+    destructive_confirmation_code: None = None
+    destination_writes_enabled: Literal[False] = False
+    warnings: list[str]
+
+
 def process_collectr_capture(
     payload: object,
     database_path: Path,
@@ -153,7 +179,9 @@ def process_collectr_capture(
     collection = source.load_collection()
     diagnostics = source.diagnostics()
     snapshot = source.create_snapshot()
-    SnapshotRepository(create_database(database_path)).add(snapshot)
+    engine = create_database(database_path)
+    SnapshotRepository(engine).add(snapshot)
+    SourceCollectionRepository(engine).add(snapshot, collection)
     return CompanionCaptureResult(
         snapshot_id=snapshot.snapshot_id,
         completeness=collection.completeness.value,
@@ -199,6 +227,52 @@ def process_dex_capture(payload: object, database_path: Path) -> DexCompanionCap
         normalization_complete=normalization_complete,
         unsupported_catalog_variants=unsupported_catalog,
         unsupported_collection_quantities=unsupported_collection,
+    )
+
+
+def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
+    engine = create_database(database_path)
+    source = SourceCollectionRepository(engine).latest()
+    destination = DestinationReadRepository(engine).get("dex")
+    if source is None:
+        raise SyncPreviewUnavailable("collectr_capture_required")
+    if destination is None:
+        raise SyncPreviewUnavailable("dex_capture_required")
+    mappings = MappingRepository(engine)
+    matches = match_collection(
+        source,
+        destination.catalog,
+        mappings.list_confirmed("dex"),
+        mappings.list_rejected("dex"),
+    )
+    MappingReviewRepository(engine).update("dex", source, matches)
+    plan = build_plan(
+        source,
+        destination.collection,
+        matches,
+        DexAdapter().get_capabilities(),
+        SyncPolicy(),
+        "dex",
+        destructive_planning_allowed=False,
+        managed_destination_ids=ManagedDestinationRepository(engine).list_ids("dex"),
+    )
+    if not destination.complete:
+        plan.warnings.append("Dex normalization is incomplete; writes remain blocked")
+    changes = preview_changes(plan)
+    maximum_changes = 2000
+    counts = {kind.value: 0 for kind in OperationType}
+    for change in changes:
+        counts[change.change] += 1
+    return CompanionSyncPreviewResult(
+        source_completeness=source.completeness.value,
+        changes=changes[:maximum_changes],
+        change_counts=counts,
+        blocked_changes=sum(
+            change.change != OperationType.NO_CHANGE.value and not change.executable
+            for change in changes
+        ),
+        truncated=len(changes) > maximum_changes,
+        warnings=plan.warnings,
     )
 
 
@@ -302,6 +376,7 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             "/v1/collectr/captures",
             "/v1/dex/captures",
             "/v1/dex/capture-chunks",
+            "/v1/sync/previews",
         }:
             self._write_json(404, {"error": "not_found"})
             return
@@ -337,6 +412,8 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
                     )
             elif self.path == "/v1/dex/captures":
                 result = process_dex_capture(payload, self.server.database_path)
+            elif self.path == "/v1/sync/previews":
+                result = process_sync_preview(self.server.database_path)
             else:
                 result = process_collectr_capture(payload, self.server.database_path)
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -366,6 +443,12 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             return
         except SourceValidationError:
             self._write_json(400, {"error": "invalid_capture_source"})
+            return
+        except SyncPreviewUnavailable as error:
+            self._write_json(
+                409,
+                {"error": "preview_unavailable", "reason": str(error)},
+            )
             return
         except CardRelayError:
             self._write_json(422, {"error": "capture_rejected"})

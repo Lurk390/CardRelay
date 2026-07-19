@@ -16,8 +16,13 @@ from card_relay.destinations.base import DestinationAdapter
 from card_relay.destinations.dex import DexAdapter
 from card_relay.destinations.mock import FileBackedMockDestinationAdapter
 from card_relay.domain.enums import MatchStatus, OperationType
-from card_relay.domain.models import CanonicalCollection, DestinationCatalogRecord, SourceSnapshot
-from card_relay.domain.operations import SyncPlan
+from card_relay.domain.models import (
+    CanonicalCollection,
+    DestinationBackupSnapshot,
+    DestinationCatalogRecord,
+    SourceSnapshot,
+)
+from card_relay.domain.operations import SyncPlan, destination_collection_fingerprint
 from card_relay.domain.results import MatchResult
 from card_relay.exceptions import CardRelayError
 from card_relay.extension.companion import serve_companion
@@ -31,15 +36,19 @@ from card_relay.sources.collectr.csv_source import CollectrCsvSource
 from card_relay.storage.database import create_database
 from card_relay.storage.repositories import (
     CatalogCacheRepository,
+    DestinationBackupRepository,
     DestinationReadRepository,
+    ManagedDestinationRepository,
     MappingRepository,
     MappingReviewRepository,
     SnapshotRepository,
+    SourceCollectionRepository,
     SyncAuditRepository,
 )
 from card_relay.sync.executor import execute_plan
 from card_relay.sync.planner import build_plan
 from card_relay.sync.policy import SyncPolicy
+from card_relay.sync.preview import preview_changes
 from card_relay.sync.safeguards import assess_source_snapshot
 
 app = typer.Typer(help="Sync your trading card collection from one source of truth to every app.")
@@ -140,6 +149,10 @@ def import_collection(
 ) -> None:
     source = _selected_collectr_source(csv_path, browser)
     collection = source.load_collection()
+    item = source.create_snapshot()
+    engine = create_database(data_directory() / "card-relay.db")
+    SnapshotRepository(engine).add(item)
+    SourceCollectionRepository(engine).add(item, collection)
     browser_diagnostics = (
         source.diagnostics().model_dump(mode="json")
         if isinstance(source, CollectrBrowserSource)
@@ -164,9 +177,12 @@ def snapshot(
     browser: Annotated[bool, typer.Option("--browser")] = False,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    item = _selected_collectr_source(csv_path, browser).create_snapshot()
+    source = _selected_collectr_source(csv_path, browser)
+    collection = source.load_collection()
+    item = source.create_snapshot()
     engine = create_database(data_directory() / "card-relay.db")
     SnapshotRepository(engine).add(item)
+    SourceCollectionRepository(engine).add(item, collection)
     _emit(item.model_dump(mode="json"), as_json)
 
 
@@ -519,7 +535,8 @@ def _create_plan(
     matches = _match_for_destination(collection, adapter, destination)
     effective_policy = policy or SyncPolicy()
     current_snapshot = source.create_snapshot()
-    repository = SnapshotRepository(create_database(data_directory() / "card-relay.db"))
+    engine = create_database(data_directory() / "card-relay.db")
+    repository = SnapshotRepository(engine)
     assessment = assess_source_snapshot(
         current_snapshot, repository.latest_trusted(), effective_policy
     )
@@ -534,6 +551,7 @@ def _create_plan(
         effective_policy,
         destination,
         assessment.destructive_planning_allowed,
+        ManagedDestinationRepository(engine).list_ids(destination),
     )
     item.warnings.extend(assessment.warnings)
     return (
@@ -547,11 +565,18 @@ def _plan_summary(item: SyncPlan, plan_id: int | None = None) -> dict[str, objec
     counts = {kind.value: 0 for kind in OperationType}
     for operation in item.operations:
         counts[operation.operation_type.value] += 1
+    changes = [change.model_dump(mode="json") for change in preview_changes(item)]
     return {
         "destination": item.destination,
         "source_completeness": item.source_completeness,
         "operations": counts,
         "executable_operations": len(item.executable_operations),
+        "safe_write_operations": len(item.safe_write_operations),
+        "destructive_operations": len(item.destructive_operations),
+        "destructive_confirmation_code": (
+            item.confirmation_code if item.destructive_operations else None
+        ),
+        "changes": changes,
         "warnings": item.warnings,
         "plan_id": plan_id,
     }
@@ -626,6 +651,13 @@ def sync(
     allow_removals: Annotated[bool, typer.Option("--allow-removals")] = False,
     maximum_removal_count: Annotated[int, typer.Option("--maximum-removal-count")] = 0,
     maximum_removal_percent: Annotated[float, typer.Option("--maximum-removal-percent")] = 0,
+    confirm_destructive: Annotated[
+        str | None,
+        typer.Option(
+            "--confirm-destructive",
+            help="State-specific code printed by plan; required for decreases and removals.",
+        ),
+    ] = None,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     policy = SyncPolicy(
@@ -645,14 +677,49 @@ def sync(
         run_id = audit.add_run(plan_id, result)
         _emit({**summary, "run_id": run_id, "applied": False, "dry_run": True}, as_json)
         return
-    if item.executable_operations and not yes:
-        typer.confirm("Apply the listed safe operations?", abort=True)
+    if item.safe_write_operations and not yes:
+        typer.confirm(
+            f"Apply {len(item.safe_write_operations)} additions or quantity increases?",
+            abort=True,
+        )
+    if item.destructive_operations:
+        if confirm_destructive is None and not as_json:
+            confirm_destructive = typer.prompt(
+                "Type the destructive confirmation code shown in the preview"
+            )
+        if confirm_destructive != item.confirmation_code:
+            raise typer.BadParameter(
+                "destructive confirmation code is missing or stale; run plan and review changes"
+            )
+    current_destination = adapter.fetch_collection()
+    current_destination_fingerprint = destination_collection_fingerprint(current_destination)
+    if current_destination_fingerprint != item.destination_collection_fingerprint:
+        _emit(
+            {
+                **summary,
+                "applied": False,
+                "dry_run": False,
+                "stale_preview": True,
+                "error": "destination changed after preview; generate and confirm a new plan",
+            },
+            as_json,
+        )
+        raise typer.Exit(7)
+    engine = create_database(data_directory() / "card-relay.db")
+    backup_id: str | None = None
+    if item.destructive_operations:
+        backup_id = DestinationBackupRepository(engine).add(
+            DestinationBackupSnapshot(
+                destination_name=destination,
+                plan_confirmation_code=item.confirmation_code,
+                collection=current_destination,
+            )
+        )
     result = execute_plan(item, adapter, dry_run=False)
     run_id = audit.add_run(plan_id, result)
+    ManagedDestinationRepository(engine).reconcile_successful_run(item, result)
     if result.succeeded:
-        SnapshotRepository(create_database(data_directory() / "card-relay.db")).add(
-            current_snapshot
-        )
+        SnapshotRepository(engine).add(current_snapshot)
     _emit(
         {
             **summary,
@@ -660,6 +727,7 @@ def sync(
             "applied": True,
             "dry_run": False,
             "succeeded": result.succeeded,
+            "backup_snapshot_id": backup_id,
         },
         as_json,
     )

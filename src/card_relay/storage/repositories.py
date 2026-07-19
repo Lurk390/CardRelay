@@ -4,10 +4,11 @@ from datetime import UTC, datetime
 from sqlalchemy import Engine, delete, select
 from sqlalchemy.orm import Session
 
-from card_relay.domain.enums import MatchStatus
+from card_relay.domain.enums import MatchStatus, OperationType
 from card_relay.domain.models import (
     CanonicalCardIdentity,
     CanonicalCollection,
+    DestinationBackupSnapshot,
     DestinationCatalogRecord,
     DestinationCollectionEntry,
     DestinationReadSnapshot,
@@ -19,11 +20,14 @@ from card_relay.matching.normalization import normalize_destination_catalog
 from card_relay.storage.models import (
     CatalogCacheEntryRow,
     CatalogCacheStateRow,
+    DestinationBackupSnapshotRow,
     DestinationReadSnapshotRow,
+    ManagedDestinationRecordRow,
     MappingReviewRow,
     MappingRow,
     RejectedMappingRow,
     SnapshotRow,
+    SourceCollectionSnapshotRow,
     SyncPlanRow,
     SyncRunRow,
 )
@@ -347,6 +351,134 @@ class DestinationReadRepository:
                 complete=bool(row.complete),
                 metadata=row.metadata_json,
             )
+
+
+class DestinationBackupRepository:
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+
+    def add(self, snapshot: DestinationBackupSnapshot) -> str:
+        payload = json.dumps(
+            [record.model_dump(mode="json") for record in snapshot.collection],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        with Session(self.engine) as session:
+            session.add(
+                DestinationBackupSnapshotRow(
+                    backup_id=snapshot.backup_id,
+                    destination_name=snapshot.destination_name,
+                    captured_at=snapshot.captured_at,
+                    plan_confirmation_code=snapshot.plan_confirmation_code,
+                    collection_payload=payload,
+                )
+            )
+            session.commit()
+        return snapshot.backup_id
+
+    def latest(self, destination: str) -> DestinationBackupSnapshot | None:
+        with Session(self.engine) as session:
+            row = session.scalar(
+                select(DestinationBackupSnapshotRow)
+                .where(DestinationBackupSnapshotRow.destination_name == destination)
+                .order_by(DestinationBackupSnapshotRow.captured_at.desc())
+                .limit(1)
+            )
+            if row is None:
+                return None
+            captured_at = row.captured_at
+            if captured_at.tzinfo is None:
+                captured_at = captured_at.replace(tzinfo=UTC)
+            return DestinationBackupSnapshot(
+                backup_id=row.backup_id,
+                destination_name=row.destination_name,
+                captured_at=captured_at,
+                plan_confirmation_code=row.plan_confirmation_code,
+                collection=[
+                    DestinationCollectionEntry.model_validate(item)
+                    for item in json.loads(row.collection_payload)
+                ],
+            )
+
+
+class ManagedDestinationRepository:
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+
+    def list_ids(self, destination: str) -> set[str]:
+        with Session(self.engine) as session:
+            return set(
+                session.scalars(
+                    select(ManagedDestinationRecordRow.destination_id).where(
+                        ManagedDestinationRecordRow.destination_name == destination
+                    )
+                )
+            )
+
+    def reconcile_successful_run(self, plan: SyncPlan, result: SyncResult) -> None:
+        succeeded = {item.operation_id for item in result.results if item.succeeded}
+        now = datetime.now(UTC)
+        with Session(self.engine) as session:
+            for operation in plan.operations:
+                if operation.destination_id is None:
+                    continue
+                if operation.operation_type is OperationType.NO_CHANGE:
+                    should_manage = True
+                else:
+                    should_manage = operation.executable and operation.operation_id in succeeded
+                if not should_manage:
+                    continue
+                key = (plan.destination, operation.destination_id)
+                if operation.operation_type is OperationType.REMOVE:
+                    row = session.get(ManagedDestinationRecordRow, key)
+                    if row is not None:
+                        session.delete(row)
+                    continue
+                row = session.get(ManagedDestinationRecordRow, key)
+                if row is None:
+                    session.add(
+                        ManagedDestinationRecordRow(
+                            destination_name=plan.destination,
+                            destination_id=operation.destination_id,
+                            source_fingerprint=operation.fingerprint,
+                            identity_json=operation.identity.model_dump(mode="json"),
+                            updated_at=now,
+                        )
+                    )
+                else:
+                    row.source_fingerprint = operation.fingerprint
+                    row.identity_json = operation.identity.model_dump(mode="json")
+                    row.updated_at = now
+            session.commit()
+
+
+class SourceCollectionRepository:
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+
+    def add(self, snapshot: SourceSnapshot, collection: CanonicalCollection) -> None:
+        with Session(self.engine) as session:
+            session.add(
+                SourceCollectionSnapshotRow(
+                    snapshot_id=snapshot.snapshot_id,
+                    source_application=snapshot.source_application,
+                    captured_at=snapshot.created_at,
+                    collection_payload=collection.model_dump_json(),
+                )
+            )
+            session.commit()
+
+    def latest(self, source_application: str = "collectr") -> CanonicalCollection | None:
+        with Session(self.engine) as session:
+            row = session.scalar(
+                select(SourceCollectionSnapshotRow)
+                .where(SourceCollectionSnapshotRow.source_application == source_application)
+                .order_by(SourceCollectionSnapshotRow.captured_at.desc())
+                .limit(1)
+            )
+            if row is None:
+                return None
+            return CanonicalCollection.model_validate_json(row.collection_payload)
 
 
 class SnapshotRepository:

@@ -111,7 +111,14 @@ def test_partial_source_allows_observed_increase_but_not_omitted_removal() -> No
         maximum_removal_percent=100,
     )
 
-    operations = build_plan(source, destination, matches, capabilities, policy).operations
+    operations = build_plan(
+        source,
+        destination,
+        matches,
+        capabilities,
+        policy,
+        managed_destination_ids={"omitted"},
+    ).operations
     assert operations[0].operation_type is OperationType.INCREASE
     assert operations[0].executable
     assert operations[1].operation_type is OperationType.REMOVE
@@ -196,9 +203,42 @@ def test_removal_requires_separate_flag_and_threshold() -> None:
     )
     capabilities = DestinationCapabilities(removals=True)
     policy = SyncPolicy(allow_removals=True, maximum_removal_count=1, maximum_removal_percent=50)
-    removal = build_plan(source, destination, matches, capabilities, policy).operations[1]
+    removal = build_plan(
+        source,
+        destination,
+        matches,
+        capabilities,
+        policy,
+        managed_destination_ids={"extra"},
+    ).operations[1]
     assert removal.operation_type is OperationType.REMOVE
     assert removal.executable
+
+
+def test_unmanaged_destination_only_record_requires_review_before_removal() -> None:
+    source, destination, matches = setup(1, 1)
+    extra = CanonicalCardIdentity(
+        card_name="Unmanaged Fixture", set_name="Fixture Set", collector_number="99"
+    )
+    destination.append(
+        DestinationCollectionEntry(destination_id="unmanaged", identity=extra, quantity=2)
+    )
+
+    operation = build_plan(
+        source,
+        destination,
+        matches,
+        DestinationCapabilities(removals=True),
+        SyncPolicy(
+            allow_removals=True,
+            maximum_removal_count=10,
+            maximum_removal_percent=100,
+        ),
+    ).operations[1]
+
+    assert operation.operation_type is OperationType.MANUAL_REVIEW
+    assert not operation.executable
+    assert "managed sync scope" in operation.reason
 
 
 def test_equivalent_plans_are_fully_deterministic() -> None:

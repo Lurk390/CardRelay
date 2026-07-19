@@ -22,6 +22,8 @@ The service worker is the only extension component allowed to contact `http://12
 
 Partial previews are first-class results. A missing condition lookup does not discard an otherwise valid ungraded holding: its condition becomes unknown, the row is counted as lossy, and completeness remains incomplete. A non-null graded identifier other than Collectr's verified ungraded sentinel still requires a recognized grading lookup and is omitted when that identity cannot be proven.
 
+The companion persists the normalized Collectr collection locally so it can build a card-level diff against the latest Dex read snapshot. The popup renders quantities and change categories with DOM `textContent`, never HTML from card data. Preview generation updates mapping-review records, keeps unmanaged destination-only cards blocked, and exposes no Dex write endpoint or approval control.
+
 The preview reports non-sensitive invalid-record reason counts—capture errors, aggregate-view records, missing identity, unsupported finish, unresolved condition or grading, non-positive quantity, and conflicting conditions. These counts make contract drift diagnosable without exposing card names or raw responses.
 
 Permissions are intentionally narrow:

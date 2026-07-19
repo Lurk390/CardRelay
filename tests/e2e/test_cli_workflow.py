@@ -9,6 +9,11 @@ from card_relay.destinations.mock import FileBackedMockDestinationAdapter
 from card_relay.domain.models import DestinationCatalogRecord
 from card_relay.extension.companion import process_dex_capture
 from card_relay.sources.collectr.browser_source import CollectrBrowserSource
+from card_relay.storage.database import create_database
+from card_relay.storage.repositories import (
+    DestinationBackupRepository,
+    SourceCollectionRepository,
+)
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "collectr" / "alternate_export.csv"
 BROWSER_FIXTURES = Path(__file__).parents[1] / "fixtures" / "collectr"
@@ -41,6 +46,17 @@ def test_cli_match_reports_exact_records(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0
     assert json.loads(result.stdout)["matches"]["exact"] == 2
+
+
+def test_csv_import_persists_normalized_collection_for_extension_diff(tmp_path: Path) -> None:
+    runner = CliRunner(env={"CARD_RELAY_DATA_DIRECTORY": str(tmp_path)})
+
+    imported = runner.invoke(app, ["collectr", "import", "--csv", str(FIXTURE), "--json"])
+
+    assert imported.exit_code == 0
+    collection = SourceCollectionRepository(create_database(tmp_path / "card-relay.db")).latest()
+    assert collection is not None
+    assert len(collection.entries) == 2
 
 
 def test_cli_persists_probable_review_then_uses_confirmation(monkeypatch, tmp_path: Path) -> None:
@@ -123,6 +139,81 @@ def test_yes_does_not_enable_quantity_decreases(tmp_path: Path) -> None:
     assert payload["executable_operations"] == 0
     unchanged = json.loads(state_path.read_text(encoding="utf-8"))
     assert unchanged[0]["quantity"] == state[0]["quantity"]
+
+
+def test_destructive_apply_requires_current_preview_code_and_creates_backup(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner(env={"CARD_RELAY_DATA_DIRECTORY": str(tmp_path)})
+    common = ["--csv", str(FIXTURE), "--destination", "mock", "--json"]
+    assert runner.invoke(app, ["sync", *common, "--apply", "--yes"]).exit_code == 0
+
+    state_path = tmp_path / "mock" / "collection.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state[0]["quantity"] += 2
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    destructive_options = [
+        "--allow-quantity-decreases",
+        "--maximum-removal-count",
+        "0",
+        "--maximum-removal-percent",
+        "0",
+    ]
+
+    preview = runner.invoke(app, ["plan", *common, *destructive_options])
+    assert preview.exit_code == 0
+    preview_payload = json.loads(preview.stdout)
+    old_code = preview_payload["destructive_confirmation_code"]
+    assert preview_payload["destructive_operations"] == 1
+    change = next(
+        item for item in preview_payload["changes"] if item["change"] == "decrease_quantity"
+    )
+    assert change["current_quantity"] > change["collectr_quantity"]
+
+    missing = runner.invoke(
+        app,
+        ["sync", *common, "--apply", "--yes", *destructive_options],
+    )
+    assert missing.exit_code == 2
+
+    state[0]["quantity"] += 1
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    stale = runner.invoke(
+        app,
+        [
+            "sync",
+            *common,
+            "--apply",
+            "--yes",
+            *destructive_options,
+            "--confirm-destructive",
+            old_code,
+        ],
+    )
+    assert stale.exit_code == 2
+
+    refreshed = runner.invoke(app, ["plan", *common, *destructive_options])
+    refreshed_code = json.loads(refreshed.stdout)["destructive_confirmation_code"]
+    applied = runner.invoke(
+        app,
+        [
+            "sync",
+            *common,
+            "--apply",
+            "--yes",
+            *destructive_options,
+            "--confirm-destructive",
+            refreshed_code,
+        ],
+    )
+    assert applied.exit_code == 0
+    applied_payload = json.loads(applied.stdout)
+    assert applied_payload["backup_snapshot_id"] is not None
+    backup = DestinationBackupRepository(create_database(tmp_path / "card-relay.db")).latest("mock")
+    assert backup is not None
+    assert backup.plan_confirmation_code == refreshed_code
+    final_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert final_state[0]["quantity"] == change["collectr_quantity"]
 
 
 def test_trusted_snapshot_drop_blocks_opted_in_destruction(tmp_path: Path) -> None:

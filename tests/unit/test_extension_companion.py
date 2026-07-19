@@ -10,7 +10,10 @@ from sqlalchemy.orm import Session
 
 from card_relay.extension.companion import (
     CollectrExtensionCapture,
+    SyncPreviewUnavailable,
     process_collectr_capture,
+    process_dex_capture,
+    process_sync_preview,
     serve_companion,
 )
 from card_relay.storage.database import create_database
@@ -160,6 +163,44 @@ def test_companion_accepts_only_validated_dex_read_capture(tmp_path: Path) -> No
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_companion_builds_card_level_read_only_sync_preview(tmp_path: Path) -> None:
+    database_path = tmp_path / "card-relay.db"
+    process_collectr_capture(_payload(), database_path)
+    process_dex_capture(json.loads(DEX_FIXTURE.read_text(encoding="utf-8")), database_path)
+
+    result = process_sync_preview(database_path)
+
+    assert result.destination == "dex"
+    assert result.changes
+    assert result.destination_writes_enabled is False
+    assert result.destructive_confirmation_code is None
+    assert sum(result.change_counts.values()) == len(result.changes)
+    assert all(change.card for change in result.changes)
+    assert all(change.current_quantity >= 0 for change in result.changes)
+
+
+def test_sync_preview_reports_which_local_capture_is_missing(tmp_path: Path) -> None:
+    database_path = tmp_path / "card-relay.db"
+
+    with pytest.raises(SyncPreviewUnavailable, match="collectr_capture_required"):
+        process_sync_preview(database_path)
+
+    process_collectr_capture(_payload(), database_path)
+    with pytest.raises(SyncPreviewUnavailable, match="dex_capture_required"):
+        process_sync_preview(database_path)
+
+
+def test_extension_exposes_visual_diff_without_write_controls() -> None:
+    popup = (EXTENSION / "popup.js").read_text(encoding="utf-8")
+    background = (EXTENSION / "background.js").read_text(encoding="utf-8")
+    html = (EXTENSION / "popup.html").read_text(encoding="utf-8")
+
+    assert "Build visual diff" in html
+    assert "card-relay-sync-preview" in popup
+    assert "/v1/sync/previews" in background
+    assert "confirm-write" not in popup
 
 
 def test_companion_accepts_dex_capture_in_bounded_contiguous_chunks(tmp_path: Path) -> None:

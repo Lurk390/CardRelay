@@ -4,19 +4,28 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
-from card_relay.domain.enums import ExtractionCompleteness, IngestionMethod, MatchStatus
+from card_relay.domain.enums import (
+    ExtractionCompleteness,
+    IngestionMethod,
+    MatchStatus,
+    OperationType,
+)
 from card_relay.domain.models import (
     CanonicalCardIdentity,
     CanonicalCollection,
     CanonicalCollectionEntry,
+    DestinationBackupSnapshot,
     DestinationCatalogRecord,
+    DestinationCollectionEntry,
     SourceSnapshot,
 )
-from card_relay.domain.operations import SyncPlan, SyncResult
+from card_relay.domain.operations import OperationResult, SyncOperation, SyncPlan, SyncResult
 from card_relay.domain.results import MatchResult
 from card_relay.storage.database import create_database
 from card_relay.storage.repositories import (
     CatalogCacheRepository,
+    DestinationBackupRepository,
+    ManagedDestinationRepository,
     MappingRepository,
     MappingReviewRepository,
     SnapshotRepository,
@@ -142,6 +151,65 @@ def test_sync_plan_and_run_audit_round_trip(tmp_path) -> None:
     assert repository.get_plan(plan_id) == plan
 
 
+def test_managed_destination_scope_and_recovery_backup_round_trip(tmp_path: Path) -> None:
+    engine = create_database(tmp_path / "controlled-sync.db")
+    identity = CanonicalCardIdentity(
+        card_name="Managed Fixture", set_name="Fixture Set", collector_number="1"
+    )
+    current = DestinationCollectionEntry(destination_id="managed-1", identity=identity, quantity=2)
+    operation = SyncOperation(
+        operation_type=OperationType.NO_CHANGE,
+        fingerprint=identity.fingerprint,
+        destination_id=current.destination_id,
+        identity=identity,
+        current_quantity=2,
+        desired_quantity=2,
+        reason="quantities already match",
+    )
+    plan = SyncPlan(
+        source_completeness=ExtractionCompleteness.COMPLETE,
+        destination="mock",
+        operations=[operation],
+    )
+
+    managed = ManagedDestinationRepository(engine)
+    managed.reconcile_successful_run(plan, SyncResult(results=[], dry_run=False))
+    assert managed.list_ids("mock") == {"managed-1"}
+
+    backup = DestinationBackupSnapshot(
+        destination_name="mock",
+        plan_confirmation_code=plan.confirmation_code,
+        collection=[current],
+    )
+    backups = DestinationBackupRepository(engine)
+    backups.add(backup)
+    assert backups.latest("mock") == backup
+
+    removal = operation.model_copy(
+        update={
+            "operation_type": OperationType.REMOVE,
+            "desired_quantity": 0,
+            "executable": True,
+            "reason": "approved removal",
+        }
+    )
+    removal_plan = plan.model_copy(update={"operations": [removal]})
+    managed.reconcile_successful_run(
+        removal_plan,
+        SyncResult(
+            results=[
+                OperationResult(
+                    operation_id=removal.operation_id,
+                    succeeded=True,
+                    message="applied",
+                )
+            ],
+            dry_run=False,
+        ),
+    )
+    assert managed.list_ids("mock") == set()
+
+
 def test_alembic_upgrade_creates_milestone_three_tables(tmp_path: Path) -> None:
     database = tmp_path / "migrations.db"
     root = Path(__file__).parents[2]
@@ -170,6 +238,9 @@ def test_alembic_upgrade_creates_milestone_three_tables(tmp_path: Path) -> None:
         "destination_catalog_cache_state",
         "mapping_reviews",
         "rejected_card_mappings",
+        "destination_backup_snapshots",
+        "managed_destination_records",
+        "source_collection_snapshots",
     } <= tables
     repository = MappingRepository(engine)
     assert repository.list_rejected("mock") == {"v2:legacy": {"rejected-before-upgrade"}}

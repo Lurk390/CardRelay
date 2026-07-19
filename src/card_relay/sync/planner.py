@@ -1,7 +1,15 @@
 from card_relay.destinations.capabilities import DestinationCapabilities
 from card_relay.domain.enums import ExtractionCompleteness, MatchStatus, OperationType
-from card_relay.domain.models import CanonicalCollection, DestinationCollectionEntry
-from card_relay.domain.operations import SyncOperation, SyncPlan
+from card_relay.domain.models import (
+    CanonicalCollection,
+    DestinationCollectionEntry,
+    collection_fingerprint,
+)
+from card_relay.domain.operations import (
+    SyncOperation,
+    SyncPlan,
+    destination_collection_fingerprint,
+)
 from card_relay.domain.results import MatchResult
 from card_relay.sync.policy import SyncPolicy
 
@@ -14,6 +22,7 @@ def build_plan(
     policy: SyncPolicy,
     destination_name: str = "mock",
     destructive_planning_allowed: bool = True,
+    managed_destination_ids: set[str] | None = None,
 ) -> SyncPlan:
     entries = {entry.fingerprint: entry for entry in source.entries}
     actual = {entry.destination_id: entry for entry in destination}
@@ -29,6 +38,7 @@ def build_plan(
                 SyncOperation(
                     operation_type=OperationType.UNSUPPORTED,
                     fingerprint=desired.fingerprint,
+                    identity=desired.identity,
                     current_quantity=0,
                     desired_quantity=desired.quantity,
                     reason=(f"{destination_name} does not support game: {desired.identity.game}"),
@@ -40,6 +50,7 @@ def build_plan(
                 SyncOperation(
                     operation_type=OperationType.MANUAL_REVIEW,
                     fingerprint=desired.fingerprint,
+                    identity=desired.identity,
                     current_quantity=0,
                     desired_quantity=desired.quantity,
                     reason=f"match status: {match.status.value}",
@@ -83,6 +94,7 @@ def build_plan(
                 operation_type=kind,
                 fingerprint=desired.fingerprint,
                 destination_id=destination_id,
+                identity=desired.identity,
                 current_quantity=current_quantity,
                 desired_quantity=desired.quantity,
                 executable=executable,
@@ -92,8 +104,12 @@ def build_plan(
     supported_actual = [
         entry for entry in actual.values() if capabilities.supports_game(entry.identity.game)
     ]
-    removal_candidates = [
+    managed_ids = managed_destination_ids or set()
+    destination_only = [
         entry for entry in supported_actual if entry.destination_id not in matched_ids
+    ]
+    removal_candidates = [
+        entry for entry in destination_only if entry.destination_id in managed_ids
     ]
     removal_percent = (
         len(removal_candidates) / len(supported_actual) * 100 if supported_actual else 0
@@ -114,6 +130,7 @@ def build_plan(
                 operation_type=OperationType.REMOVE,
                 fingerprint=current.identity.fingerprint,
                 destination_id=current.destination_id,
+                identity=current.identity,
                 current_quantity=current.quantity,
                 desired_quantity=0,
                 executable=allowed,
@@ -122,14 +139,34 @@ def build_plan(
                 else "removal blocked by safety policy or threshold",
             )
         )
-    warnings = (
-        []
-        if destructive_allowed
-        else ["source is not complete; all destructive operations are blocked"]
-    )
+    for current in sorted(
+        (entry for entry in destination_only if entry.destination_id not in managed_ids),
+        key=lambda item: item.destination_id,
+    ):
+        operations.append(
+            SyncOperation(
+                operation_type=OperationType.MANUAL_REVIEW,
+                fingerprint=current.identity.fingerprint,
+                destination_id=current.destination_id,
+                identity=current.identity,
+                current_quantity=current.quantity,
+                desired_quantity=0,
+                reason="destination-only record is not in CardRelay's managed sync scope",
+            )
+        )
+    warnings: list[str] = []
+    if not destructive_allowed:
+        warning = (
+            "source is not complete; all destructive operations are blocked"
+            if source.completeness is not ExtractionCompleteness.COMPLETE
+            else "source is not approved for destructive planning"
+        )
+        warnings.append(warning)
     return SyncPlan(
         source_completeness=source.completeness,
         destination=destination_name,
+        source_collection_fingerprint=collection_fingerprint(source),
+        destination_collection_fingerprint=destination_collection_fingerprint(destination),
         operations=operations,
         warnings=warnings,
     )

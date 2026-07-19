@@ -8,6 +8,8 @@ CardRelay is an early open-source trading-card collection synchronization engine
 
 Milestones 1 through 4 are implemented. The browser source provides a visible persistent Collectr session, verified portfolio discovery, structured response capture, infinite scrolling, embedded-data and DOM fallbacks, completeness diagnostics, sanitized fixtures, CSV equivalence tests, and browser snapshots. Destination catalogs are canonically normalized and cached; constrained probable scoring, ambiguity review, match explanations, confirmed mappings, and multiple rejected candidates persist in SQLite. The extension can also capture Dex's catalog and current collection into a validated, read-only SQLite snapshot for dry-run comparison. Browser extraction remains experimental, and all Dex writes remain disabled.
 
+The approved Milestone 5–6 safety foundation is in progress: CLI plans now include a card-level visual diff, state-bound destructive confirmation code, stale-preview detection, persistent managed destination scope, and automatic pre-destructive recovery snapshots. The extension can display the same Collectr-to-Dex diff after both captures. This does not enable Dex writes.
+
 Safety defaults matter: every sync is a dry run, writes require explicit application action, ambiguous records are never applied, and decreases/removals remain blocked unless separately enabled with thresholds. Incomplete sources cannot authorize destructive operations.
 
 An ongoing browser observation may contain only part of a portfolio. CardRelay may plan safe additions or quantity increases for cards actually observed, but absence from a partial observation never means zero and cannot authorize a decrease or removal. Browser snapshots are not considered safe for destructive reconciliation even when their own completeness checks pass. Reliability criteria must be approved and demonstrated separately before that policy can change.
@@ -79,7 +81,7 @@ The token is stored only in this local Chrome extension profile. Restarting the 
 4. Reopen the popup and select **Refresh status**. Wait for **Capture is idle**. A complete observation should show contiguous pages and a terminal page.
 5. Select **Send preview to CardRelay**.
 
-The companion validates the untrusted browser payload with the same Python contract and canonical parser used by the CLI. The popup then reports the snapshot ID, unique-entry count, total quantity, and completeness. Raw response bodies are discarded after validation; SQLite stores snapshot metadata, not the extension's raw portfolio responses.
+The companion validates the untrusted browser payload with the same Python contract and canonical parser used by the CLI. The popup then reports the snapshot ID, unique-entry count, total quantity, and completeness. Raw response bodies are discarded after validation; SQLite stores the normalized collection and snapshot metadata locally so it can build later diffs, never the extension's raw portfolio responses.
 
 `complete` means the observed schema, 30-record pagination, empty terminal page, condition/grading metadata, and visible quantity total reconciled. Metadata may come from observed read responses or Collectr's two verified expiring cache entries; CardRelay never enumerates other browser storage. `incomplete` is still useful for observed additions and increases, but omitted cards remain unknown and cannot authorize decreases or removals.
 
@@ -101,6 +103,7 @@ The companion validates the untrusted browser payload with the same Python contr
 3. Open Dex **Search**, open CardRelay, and select **Start Dex catalog capture**.
 4. Keep that Search tab open. CardRelay replays the already-observed paginated read request at a bounded rate; no scrolling is required. Refresh status until every catalog page is present.
 5. Select **Send Dex read-only preview**. The extension sends bounded chunks to the loopback companion, which validates pagination, normalizes supported finish labels, caches the catalog, and stores the destination snapshot.
+6. After a Collectr capture and Dex capture are stored, select **Build visual diff** to review additions, increases, decreases, removals, and records blocked for mapping review.
 
 The catalog remains only in the active Dex tab until submission; collection pages use Chrome session storage only so they survive the Collection-to-Search navigation. Missing or unknown finish labels are reported and mark normalization incomplete. This workflow never calls a Dex write operation.
 
@@ -133,11 +136,20 @@ uv run card-relay catalog cache-status --destination mock --json
 
 Match output explains scores, matched and mismatched fields, and alternatives. Rejections remain excluded on later runs; confirmations become exact persistent mappings. See [matching and persistent review](docs/matching.md) for the scoring weights, configuration, safety behavior, and SQLite cache semantics.
 
-An explicit local mock write remains limited to additions and quantity increases:
+An explicit local mock write remains limited to additions and quantity increases unless destructive policy flags, thresholds, and the state-specific confirmation code are supplied:
 
 ```bash
 uv run card-relay sync --csv tests/fixtures/collectr/plausible_export.csv --destination mock --apply
 ```
+
+For a controlled destructive mock run, generate the plan first and review every item in `changes`:
+
+```powershell
+uv run card-relay plan --csv collection.csv --destination mock --allow-quantity-decreases --allow-removals --maximum-removal-count 10 --maximum-removal-percent 5 --json
+uv run card-relay sync --csv collection.csv --destination mock --apply --yes --allow-quantity-decreases --allow-removals --maximum-removal-count 10 --maximum-removal-percent 5 --confirm-destructive CODE_FROM_PLAN --json
+```
+
+`--yes` skips only the safe-write prompt. The destructive code changes whenever the source, destination state, or operations change. A destructive run stores a local destination backup first. Destination-only records that CardRelay has never managed are shown for manual review rather than deleted.
 
 The browser source keeps private product payloads in memory only long enough to validate and normalize them. The extension preserves only bounded condition/grading metadata and sanitized Dex collection pages in browser-session storage across navigation. Large Dex catalog pages remain tab-memory-only and cross the loopback boundary in bounded chunks. It requests no undocumented write operation, does not bypass login, CAPTCHA, access-control, or rate-limit behavior, and fails closed when completeness evidence is insufficient.
 
