@@ -32,11 +32,27 @@
         <div id="diff-summary">Capture both services to compare them.</div>
         <div id="diff-list" aria-live="polite"></div>
       </section>
+      <section id="safe-write" hidden>
+        <h2>Apply safe Dex changes</h2>
+        <p>Only additions and quantity increases shown in this preview can be applied. Decreases and removals remain blocked.</p>
+        <label for="safe-write-confirmation">Confirmation code</label>
+        <input id="safe-write-confirmation" autocomplete="off" spellcheck="false" maxlength="12">
+        <button id="apply-safe-write" disabled>Apply additions and increases</button>
+        <div id="safe-write-status" aria-live="polite"></div>
+      </section>
       <section>
         <h2>Match review</h2>
         <p>Confirm only when the Collectr and Dex printings are the same card.</p>
         <div id="review-summary">Build the diff to load probable and ambiguous matches.</div>
         <div id="review-list" aria-live="polite"></div>
+      </section>
+      <section id="write-research" hidden>
+        <h2>Dex write-contract research</h2>
+        <p>Arm this only before you manually make one small, reversible Dex collection change. CardRelay records schema, never values, and does not replay the request.</p>
+        <button id="arm-write-research" class="secondary">Arm schema-only observation</button>
+        <button id="submit-write-research" class="secondary" disabled>Validate observed schema</button>
+        <div id="write-research-status">No write observation is armed.</div>
+        <div id="write-research-results" aria-live="polite"></div>
       </section>
     </main>
     <script src="popup.js"></script>

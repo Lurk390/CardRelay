@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -99,6 +99,7 @@ class DexCapturedCard(BaseModel):
 class DexCapturedCollectionEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    id: NonEmptyString
     card_id: NonEmptyString = Field(alias="cardId")
     card: DexCapturedCard
     quantities: dict[NonEmptyString, DexQuantity]
@@ -108,6 +109,23 @@ class DexCapturedCollectionEntry(BaseModel):
         if self.card_id != self.card.card_id:
             raise ValueError("entry cardId must match nested card cardId")
         return self
+
+
+class DexWriteCollectionRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: NonEmptyString
+    card_id: NonEmptyString
+    quantities: dict[NonEmptyString, DexQuantity]
+
+
+class DexWriteMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["dex-safe-write-metadata-v1"] = "dex-safe-write-metadata-v1"
+    collection_records: dict[NonEmptyString, DexWriteCollectionRecord]
+    quantity_keys: dict[NonEmptyString, NonEmptyString]
+    ambiguous_destination_ids: list[NonEmptyString] = Field(default_factory=list)
 
 
 class DexCapturedCollectionPage(BaseModel):

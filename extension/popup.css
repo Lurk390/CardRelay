@@ -33,9 +33,35 @@ h2 {
   font-size: 15px;
 }
 
-p, #status, #diff-summary, #review-summary {
+p, #status, #diff-summary, #review-summary, #write-research-status, #safe-write-status {
   color: #b7c2c6;
   font-size: 13px;
+}
+
+#write-research {
+  border-color: #365f7a;
+}
+
+#safe-write {
+  border-color: #2f8f7d;
+}
+
+#safe-write-status {
+  white-space: pre-line;
+}
+
+#write-research-results {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.research-result {
+  padding: 7px;
+  border-left: 3px solid #60a5fa;
+  border-radius: 5px;
+  background: #0d1012;
+  white-space: pre-line;
 }
 
 #diff-list {

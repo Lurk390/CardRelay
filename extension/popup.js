@@ -10,6 +10,16 @@ const diffSummary = document.querySelector("#diff-summary");
 const diffList = document.querySelector("#diff-list");
 const reviewSummary = document.querySelector("#review-summary");
 const reviewList = document.querySelector("#review-list");
+const writeResearchSection = document.querySelector("#write-research");
+const armWriteResearchButton = document.querySelector("#arm-write-research");
+const submitWriteResearchButton = document.querySelector("#submit-write-research");
+const writeResearchStatus = document.querySelector("#write-research-status");
+const writeResearchResults = document.querySelector("#write-research-results");
+const safeWriteSection = document.querySelector("#safe-write");
+const safeWriteConfirmation = document.querySelector("#safe-write-confirmation");
+const applySafeWriteButton = document.querySelector("#apply-safe-write");
+const safeWriteStatus = document.querySelector("#safe-write-status");
+let latestSafeWritePreview = null;
 
 async function activeSupportedTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -21,6 +31,17 @@ async function activeSupportedTab() {
     return { tab, service: "dex" };
   }
   throw new Error("Open app.getcollectr.com or app.dextcg.com in the active tab.");
+}
+
+async function sendToContentScript(tab, service, message) {
+  try {
+    return await chrome.tabs.sendMessage(tab.id, message);
+  } catch {
+    const page = service === "dex" ? "Dex" : "Collectr";
+    throw new Error(
+      `CardRelay is not active in this ${page} tab. Reload the ${page} tab once, then reopen CardRelay.`
+    );
+  }
 }
 
 function displayCollectrStatus(status) {
@@ -41,6 +62,7 @@ function displayCollectrStatus(status) {
 
 function displayDexStatus(status) {
   sendButton.disabled = !status.collectionComplete || !status.catalogComplete;
+  submitWriteResearchButton.disabled = !status.writeObservationCount;
   const collectionCount = status.collectionTotalPages
     ? `${status.collectionPageCount}/${status.collectionTotalPages}`
     : String(status.collectionPageCount);
@@ -51,6 +73,7 @@ function displayDexStatus(status) {
     `Active Dex capture: ${status.activeTarget || "none"}`,
     `Collection pages: ${collectionCount} (${status.collectionComplete ? "complete" : "incomplete"})`,
     `Catalog pages: ${catalogCount} (${status.catalogComplete ? "complete" : "incomplete"})`,
+    `Write observations: ${status.writeObservationCount || 0}${status.writeResearchArmed ? " (armed)" : ""}`,
     status.collectionConflict || status.catalogConflict
       ? "Conflicting repeated page detected; restart that capture."
       : "Catalog pages load gradually; manual browsing remains available."
@@ -61,15 +84,99 @@ function configureForService(service) {
   const isDex = service === "dex";
   startButton.textContent = isDex ? "Start Dex collection capture" : "Start portfolio capture";
   catalogButton.hidden = !isDex;
+  writeResearchSection.hidden = !isDex;
   sendButton.textContent = isDex ? "Send Dex read-only preview" : "Send preview to CardRelay";
 }
+
+armWriteResearchButton.addEventListener("click", async () => {
+  try {
+    const { tab, service } = await activeSupportedTab();
+    if (service !== "dex") throw new Error("Open Dex before arming write research.");
+    const response = await sendToContentScript(tab, service, {
+      type: "card-relay-dex-start",
+      target: "write-research"
+    });
+    if (!response?.ok) throw new Error("Unable to arm Dex write research.");
+    writeResearchResults.replaceChildren();
+    writeResearchStatus.textContent = [
+      "Schema-only observation is armed.",
+      "Manually make one small, reversible collection change in Dex, then reopen CardRelay."
+    ].join(" ");
+    displayDexStatus(response.status);
+  } catch (error) {
+    writeResearchStatus.textContent = error.message;
+  }
+});
+
+function topLevelFields(shape) {
+  return shape?.kind === "object" ? Object.keys(shape.fields || {}).sort().join(", ") : shape?.kind;
+}
+
+function shapePaths(shape, prefix = "", paths = []) {
+  if (!shape || paths.length >= 50) return paths;
+  if (shape.kind === "object") {
+    for (const [field, child] of Object.entries(shape.fields || {}).sort()) {
+      shapePaths(child, prefix ? `${prefix}.${field}` : field, paths);
+    }
+    return paths;
+  }
+  if (shape.kind === "array") {
+    for (const child of shape.items || []) shapePaths(child, `${prefix}[]`, paths);
+    return paths;
+  }
+  paths.push(`${prefix || "body"}:${shape.kind}${shape.format ? `(${shape.format})` : ""}`);
+  return paths;
+}
+
+submitWriteResearchButton.addEventListener("click", async () => {
+  submitWriteResearchButton.disabled = true;
+  writeResearchStatus.textContent = "Validating the schema-only observation…";
+  try {
+    const { tab, service } = await activeSupportedTab();
+    if (service !== "dex") throw new Error("Open Dex before submitting write research.");
+    const response = await sendToContentScript(tab, service, {
+      type: "card-relay-dex-write-research-submit"
+    });
+    if (!response?.ok) {
+      const issues = (response?.issues || [])
+        .map(issue => `${issue.location || "capture"}: ${issue.type || "invalid"}`)
+        .join(", ");
+      throw new Error(
+        `Observation rejected: ${response?.error || "unknown error"}${issues ? ` (${issues})` : ""}`
+      );
+    }
+    const result = response.result;
+    writeResearchStatus.textContent = [
+      `${result.observation_count} schema-only observation${result.observation_count === 1 ? "" : "s"} validated.`,
+      result.warning
+    ].join(" ");
+    writeResearchResults.replaceChildren();
+    for (const observation of result.observations || []) {
+      const item = document.createElement("div");
+      item.className = "research-result";
+      item.textContent = [
+        `${observation.method} ${observation.route_template} → ${observation.response_status}`,
+        `Origin host: ${observation.origin_host}`,
+        `Query keys: ${(observation.query_keys || []).join(", ") || "none"}`,
+        `Path bindings: ${(observation.path_parameter_bindings || [])
+          .map(binding => `${binding.segment_index}=${binding.source}`).join(", ") || "none"}`,
+        `Request fields: ${topLevelFields(observation.request_shape) || "none"}`,
+        `Request schema: ${shapePaths(observation.request_shape).join(", ") || "empty"}`,
+        `Response shape: ${topLevelFields(observation.response_shape) || "empty"}`
+      ].join("\n");
+      writeResearchResults.append(item);
+    }
+  } catch (error) {
+    writeResearchStatus.textContent = error.message;
+  }
+});
 
 async function refreshStatus() {
   try {
     const { tab, service } = await activeSupportedTab();
     configureForService(service);
     const type = service === "dex" ? "card-relay-dex-status" : "card-relay-status";
-    const response = await chrome.tabs.sendMessage(tab.id, { type });
+    const response = await sendToContentScript(tab, service, { type });
     if (!response?.ok) throw new Error("CardRelay content script is unavailable. Reload the tab.");
     if (service === "dex") displayDexStatus(response.status);
     else displayCollectrStatus(response.status);
@@ -94,7 +201,7 @@ startButton.addEventListener("click", async () => {
   try {
     const { tab, service } = await activeSupportedTab();
     if (service === "dex") {
-      const response = await chrome.tabs.sendMessage(tab.id, {
+      const response = await sendToContentScript(tab, service, {
         type: "card-relay-dex-start",
         target: "collection"
       });
@@ -102,7 +209,7 @@ startButton.addEventListener("click", async () => {
       displayDexStatus(response.status);
       return;
     }
-    const response = await chrome.tabs.sendMessage(tab.id, { type: "card-relay-start" });
+    const response = await sendToContentScript(tab, service, { type: "card-relay-start" });
     if (!response?.ok) throw new Error("Unable to start capture. Reload Collectr and retry.");
     if (response.navigateToProducts) {
       await chrome.tabs.update(tab.id, { url: "https://app.getcollectr.com/portfolio/products" });
@@ -119,7 +226,7 @@ catalogButton.addEventListener("click", async () => {
   try {
     const { tab, service } = await activeSupportedTab();
     if (service !== "dex") throw new Error("Open Dex before starting a catalog capture.");
-    const response = await chrome.tabs.sendMessage(tab.id, {
+    const response = await sendToContentScript(tab, service, {
       type: "card-relay-dex-start",
       target: "catalog"
     });
@@ -142,7 +249,9 @@ function displaySyncPreview(result) {
     result.truncated || visibleChanges.length > 250
       ? "The displayed diff list is truncated."
       : "All changes are displayed.",
-    "Writes are disabled until the Dex write contract is separately verified."
+    result.destination_writes_enabled
+      ? "Safe Dex writes are ready for explicit confirmation below."
+      : "Safe Dex writes are unavailable for this preview."
   ].join("\n");
   diffList.replaceChildren();
   for (const change of visibleChanges.slice(0, 250)) {
@@ -159,8 +268,66 @@ function displaySyncPreview(result) {
     item.append(title, detail);
     diffList.append(item);
   }
+  latestSafeWritePreview = result.destination_writes_enabled ? {
+    confirmationCode: result.safe_write_confirmation_code,
+    operationIds: result.safe_write_operation_ids || []
+  } : null;
+  safeWriteSection.hidden = !latestSafeWritePreview;
+  safeWriteConfirmation.value = "";
+  applySafeWriteButton.disabled = true;
+  safeWriteStatus.textContent = latestSafeWritePreview
+    ? `${result.safe_write_count} safe change${result.safe_write_count === 1 ? "" : "s"} ready. Type ${result.safe_write_confirmation_code} to enable the button.`
+    : (result.safe_write_block_reason === "dex_recapture_required_after_write_attempt"
+      ? "A Dex write was attempted from this snapshot. Capture Dex again before another attempt."
+      : "No safe Dex writes are available from this preview.");
   displayMappingReviews(result);
 }
+
+safeWriteConfirmation.addEventListener("input", () => {
+  const typed = safeWriteConfirmation.value.trim().toUpperCase();
+  applySafeWriteButton.disabled = !latestSafeWritePreview || typed !== latestSafeWritePreview.confirmationCode;
+});
+
+applySafeWriteButton.addEventListener("click", async () => {
+  if (!latestSafeWritePreview) return;
+  applySafeWriteButton.disabled = true;
+  safeWriteStatus.textContent = "Preparing the confirmed Dex batch…";
+  try {
+    const prepared = await chrome.runtime.sendMessage({
+      type: "card-relay-safe-write-prepare",
+      payload: {
+        confirmation_code: latestSafeWritePreview.confirmationCode,
+        operation_ids: latestSafeWritePreview.operationIds
+      }
+    });
+    if (!prepared?.ok) throw new Error(prepared?.error || "safe_write_prepare_failed");
+    const { tab, service } = await activeSupportedTab();
+    if (service !== "dex") throw new Error("Open Dex before applying the confirmed batch.");
+    safeWriteStatus.textContent = "Applying the confirmed Dex batch…";
+    const execution = await sendToContentScript(tab, service, {
+      type: "card-relay-dex-safe-write-execute",
+      batch: prepared.result
+    });
+    if (!execution?.ok) throw new Error("Dex did not return a complete execution report.");
+    const reported = await chrome.runtime.sendMessage({
+      type: "card-relay-safe-write-report",
+      payload: {
+        contract_version: "dex-safe-write-report-v1",
+        plan_id: prepared.result.plan_id,
+        confirmation_code: prepared.result.confirmation_code,
+        results: execution.results
+      }
+    });
+    if (!reported?.ok) throw new Error(reported?.error || "safe_write_report_failed");
+    const summary = reported.result;
+    latestSafeWritePreview = null;
+    safeWriteSection.hidden = true;
+    safeWriteStatus.textContent = `${summary.succeeded} succeeded, ${summary.failed} failed. Capture Dex again before any further sync.`;
+    diffSummary.textContent = "Dex write attempt recorded. Capture Dex again before building the next diff.";
+  } catch (error) {
+    safeWriteStatus.textContent = `Write attempt was not completed: ${error.message}. Capture Dex again before retrying.`;
+  }
+});
 
 function identityLabel(identity) {
   const set = identity.set_name || identity.set_code || "Unknown set";
@@ -290,7 +457,7 @@ sendButton.addEventListener("click", async () => {
   try {
     const { tab, service } = await activeSupportedTab();
     const type = service === "dex" ? "card-relay-dex-submit" : "card-relay-submit";
-    const response = await chrome.tabs.sendMessage(tab.id, { type });
+    const response = await sendToContentScript(tab, service, { type });
     if (!response?.ok) throw new Error(`Preview rejected: ${response?.error || "unknown error"}`);
     const result = response.result;
     if (service === "dex") {

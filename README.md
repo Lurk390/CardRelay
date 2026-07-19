@@ -6,9 +6,9 @@ CardRelay is an early open-source trading-card collection synchronization engine
 
 ## Current status
 
-Milestones 1 through 4 are implemented. The browser source provides a visible persistent Collectr session, verified portfolio discovery, structured response capture, infinite scrolling, embedded-data and DOM fallbacks, completeness diagnostics, sanitized fixtures, CSV equivalence tests, and browser snapshots. Destination catalogs are canonically normalized and cached; constrained probable scoring, ambiguity review, match explanations, confirmed mappings, and multiple rejected candidates persist in SQLite. The extension can also capture Dex's catalog and current collection into a validated, read-only SQLite snapshot for dry-run comparison. Browser extraction remains experimental, and all Dex writes remain disabled.
+Milestones 1 through 4 are implemented. The browser source provides a visible persistent Collectr session, verified portfolio discovery, structured response capture, infinite scrolling, embedded-data and DOM fallbacks, completeness diagnostics, sanitized fixtures, CSV equivalence tests, and browser snapshots. Destination catalogs are canonically normalized and cached; constrained probable scoring, ambiguity review, match explanations, confirmed mappings, and multiple rejected candidates persist in SQLite. The extension captures Dex's catalog and current collection into a validated local snapshot for comparison, then supports explicitly confirmed safe additions and quantity increases only.
 
-The approved Milestone 5–6 safety foundation is in progress: CLI plans now include a card-level visual diff, state-bound destructive confirmation code, stale-preview detection, persistent managed destination scope, and automatic pre-destructive recovery snapshots. The extension can display the same Collectr-to-Dex diff after both captures. This does not enable Dex writes.
+The approved Milestone 5–6 safety foundation is in progress: CLI plans include a card-level visual diff, state-bound destructive confirmation code, stale-preview detection, persistent managed destination scope, and automatic pre-destructive recovery snapshots. The extension displays the same Collectr-to-Dex diff and can apply the separately verified Dex add/increase operations with an explicit, state-bound confirmation code. Decreases and removals remain disabled.
 
 Safety defaults matter: every sync is a dry run, writes require explicit application action, ambiguous records are never applied, and decreases/removals remain blocked unless separately enabled with thresholds. Incomplete sources cannot authorize destructive operations.
 
@@ -38,7 +38,7 @@ uv run playwright install chromium
 
 ## Recommended browser-extension workflow
 
-The extension is the recommended ongoing import path for free and Pro Collectr users. It runs inside the normal Chrome tab where the user is already authenticated, avoiding automated Google sign-in. It captures a manual preview only; it cannot write to Dex or another destination.
+The extension is the recommended ongoing import path for free and Pro Collectr users. It runs inside the normal Chrome tab where the user is already authenticated, avoiding automated Google sign-in. It captures a manual preview and can apply explicitly confirmed safe Dex changes; it cannot reduce quantities, remove cards, or write to another destination.
 
 ### 1. Start the local companion
 
@@ -106,7 +106,11 @@ The companion validates the untrusted browser payload with the same Python contr
 6. After a Collectr capture and Dex capture are stored, select **Build visual diff** to review additions, increases, decreases, removals, and records blocked for mapping review.
 7. In **Match review**, compare the complete Collectr and Dex printing identities. Select a candidate and choose **Confirm match** only when they represent the same printing, or choose **Reject candidate** to exclude it. Each decision is revalidated against the latest captures, persisted in local SQLite, and immediately rebuilds the diff.
 
-The match queue displays 50 records at a time and refreshes after every decision; summary counts cover the complete queue. Confirmations and rejections survive browser and companion restarts, but stale decisions and destination IDs not offered by the current matcher are rejected. The catalog remains only in the active Dex tab until submission; collection pages use Chrome session storage only so they survive the Collection-to-Search navigation. Missing or unknown finish labels are reported and mark normalization incomplete. This workflow never calls a Dex write operation.
+The match queue displays 50 records at a time and refreshes after every decision; summary counts cover the complete queue. Confirmations and rejections survive browser and companion restarts, but stale decisions and destination IDs not offered by the current matcher are rejected. The catalog remains only in the active Dex tab until submission; collection pages use Chrome session storage only so they survive the Collection-to-Search navigation. Missing or unknown finish labels are reported and mark normalization incomplete.
+
+When the preview offers **Apply safe Dex changes**, verify the highlighted diff, type its displayed 12-character confirmation code, and apply the batch from an open Dex tab. CardRelay can only create cards or raise quantities. It uses the verified `clients.dextcg.com` collection routes, preserves every existing Dex quantity key on updates, retries only idempotent `PATCH` requests, and records each attempt locally. After any attempt—including a partial or uncertain failure—capture Dex again before preparing another batch. This prevents a stale preview from replaying an addition.
+
+The popup also includes an explicitly armed **Dex write-contract research** mode for development. After arming it, the user manually makes one small, reversible Dex collection change and then validates the observation. CardRelay captures only the HTTP method, a route template with dynamic segments removed, query-key names, bounded JSON type/property shapes, and response status. Scalar values, full URLs, headers, cookies, tokens, identifiers, and card data are discarded in the page; the request is never replayed and destination writes remain disabled.
 
 See the focused [extension guide](extension/README.md), [security and architecture details](docs/browser-extension.md), and [Collectr web contract](docs/collectr-browser-research.md).
 

@@ -1,26 +1,30 @@
 import hmac
 import json
+import re
 import secrets
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from card_relay.destinations.dex.adapter import DexAdapter
+from card_relay.destinations.capabilities import DestinationCapabilities
 from card_relay.destinations.dex.models import (
     DexCapturedCatalogPage,
     DexCapturedCollectionPage,
+    DexWriteMetadata,
 )
 from card_relay.destinations.dex.normalizer import (
+    build_dex_write_metadata,
     normalize_dex_catalog,
     normalize_dex_collection,
 )
 from card_relay.domain.enums import MatchStatus, OperationType
 from card_relay.domain.models import CanonicalCardIdentity, DestinationReadSnapshot
+from card_relay.domain.operations import OperationResult, SyncPlan, SyncResult
 from card_relay.domain.results import MatchResult
 from card_relay.exceptions import CardRelayError, SourceValidationError
 from card_relay.matching import match_collection
@@ -43,6 +47,7 @@ from card_relay.storage.repositories import (
     MappingReviewRepository,
     SnapshotRepository,
     SourceCollectionRepository,
+    SyncAuditRepository,
 )
 from card_relay.sync.planner import build_plan
 from card_relay.sync.policy import SyncPolicy
@@ -57,6 +62,10 @@ class SyncPreviewUnavailable(CardRelayError):
 
 
 class MappingDecisionUnavailable(CardRelayError):
+    pass
+
+
+class SafeWriteUnavailable(CardRelayError):
     pass
 
 
@@ -150,6 +159,127 @@ class DexCompanionCaptureResult(BaseModel):
     destination_writes_enabled: Literal[False] = False
 
 
+class DexJsonShape(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal[
+        "object",
+        "array",
+        "string",
+        "integer",
+        "number",
+        "boolean",
+        "null",
+        "truncated",
+        "unsupported",
+    ]
+    format: Literal["uuid", "url", "opaque", "text"] | None = None
+    fields: dict[str, "DexJsonShape"] = Field(default_factory=dict, max_length=50)
+    items: list["DexJsonShape"] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode="after")
+    def shape_is_structural_only(self) -> "DexJsonShape":
+        if any(
+            not key
+            or len(key) > 64
+            or re.fullmatch(r"(?:[A-Za-z][A-Za-z0-9_-]*|\{dynamic_key\})", key) is None
+            for key in self.fields
+        ):
+            raise ValueError("shape property names must be bounded identifiers")
+        if self.kind != "object" and self.fields:
+            raise ValueError("only object shapes may contain fields")
+        if self.kind != "array" and self.items:
+            raise ValueError("only array shapes may contain items")
+        if self.kind != "string" and self.format is not None:
+            raise ValueError("only string shapes may contain a format")
+        return self
+
+
+DexObservationKey = Annotated[
+    str,
+    Field(min_length=1, max_length=64, pattern=r"^(?:[A-Za-z][A-Za-z0-9_-]*|\{dynamic_key\})$"),
+]
+
+
+class DexWritePathBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    segment_index: int = Field(ge=0, le=20)
+    source: str = Field(
+        min_length=9,
+        max_length=400,
+        pattern=r"^(?:request|response)(?:\.[A-Za-z][A-Za-z0-9_-]{0,63}){1,6}$",
+    )
+
+
+class DexWriteObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["POST", "PUT", "PATCH", "DELETE"]
+    origin_host: str = Field(
+        min_length=10,
+        max_length=253,
+        pattern=r"^(?:[a-z0-9-]+\.)*dextcg\.com$",
+    )
+    route_template: str = Field(
+        min_length=1,
+        max_length=512,
+        pattern=r"^/(?:[a-z0-9_-]+|\{segment\})(?:/(?:[a-z0-9_-]+|\{segment\}))*$",
+    )
+    query_keys: list[DexObservationKey] = Field(default_factory=list, max_length=50)
+    path_parameter_bindings: list[DexWritePathBinding] = Field(default_factory=list, max_length=20)
+    request_shape: DexJsonShape
+    response_status: int = Field(ge=100, le=599)
+    response_shape: DexJsonShape | None = None
+
+    @model_validator(mode="after")
+    def path_bindings_target_redacted_segments(self) -> "DexWriteObservation":
+        segments = self.route_template.removeprefix("/").split("/")
+        for binding in self.path_parameter_bindings:
+            if (
+                binding.segment_index >= len(segments)
+                or segments[binding.segment_index] != "{segment}"
+            ):
+                raise ValueError("path bindings must target redacted route segments")
+        return self
+
+
+class DexWriteObservationCapture(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["dex-write-observation-v1"]
+    observations: list[DexWriteObservation] = Field(min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def observations_are_bounded(self) -> "DexWriteObservationCapture":
+        nodes = 0
+
+        def visit(shape: DexJsonShape, depth: int = 0) -> None:
+            nonlocal nodes
+            if depth > 6:
+                raise ValueError("write observation shape exceeds the depth limit")
+            nodes += 1
+            if nodes > 2000:
+                raise ValueError("write observation shape exceeds the node limit")
+            for child in shape.fields.values():
+                visit(child, depth + 1)
+            for child in shape.items:
+                visit(child, depth + 1)
+
+        for observation in self.observations:
+            visit(observation.request_shape)
+            if observation.response_shape is not None:
+                visit(observation.response_shape)
+        return self
+
+
+class DexWriteObservationResult(BaseModel):
+    observations: list[DexWriteObservation]
+    observation_count: int
+    destination_writes_enabled: Literal[False] = False
+    warning: str = "Schema-only research does not authorize or implement Dex writes."
+
+
 class CompanionMappingCandidate(BaseModel):
     destination_id: str
     identity: CanonicalCardIdentity
@@ -185,11 +315,118 @@ class CompanionSyncPreviewResult(BaseModel):
     blocked_changes: int
     truncated: bool
     destructive_confirmation_code: None = None
-    destination_writes_enabled: Literal[False] = False
+    destination_writes_enabled: bool
+    safe_write_confirmation_code: str | None
+    safe_write_operation_ids: list[str]
+    safe_write_count: int
+    safe_write_block_reason: str | None
     mapping_reviews: list[CompanionMappingReview]
     mapping_review_count: int
     mapping_reviews_truncated: bool
     warnings: list[str]
+
+
+class DexSafeWriteBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    card_id: str = Field(alias="cardId", min_length=1, max_length=256)
+    quantities: dict[str, int] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def quantities_are_safe(self) -> "DexSafeWriteBody":
+        if any(
+            not key
+            or len(key) > 64
+            or re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", key) is None
+            or type(value) is not int
+            or value < 0
+            or value > 1_000_000
+            for key, value in self.quantities.items()
+        ):
+            raise ValueError("Dex quantities must use bounded keys and non-negative integers")
+        return self
+
+
+class DexSafeWriteCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str = Field(min_length=10, max_length=100)
+    method: Literal["POST", "PATCH"]
+    origin: Literal["https://clients.dextcg.com"] = "https://clients.dextcg.com"
+    path: str = Field(min_length=15, max_length=512)
+    body: DexSafeWriteBody
+
+    @model_validator(mode="after")
+    def route_matches_method(self) -> "DexSafeWriteCommand":
+        if self.method == "POST" and self.path != "/api/user/cards":
+            raise ValueError("Dex additions must use the verified collection route")
+        if (
+            self.method == "PATCH"
+            and re.fullmatch(r"/api/user/cards/[A-Za-z0-9_-]{1,256}", self.path) is None
+        ):
+            raise ValueError("Dex quantity updates require a safe collection record ID")
+        return self
+
+
+class DexSafeWritePrepareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation_code: str = Field(min_length=12, max_length=12, pattern=r"^[A-F0-9]{12}$")
+    operation_ids: list[str] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def operation_ids_are_unique(self) -> "DexSafeWritePrepareRequest":
+        if len(self.operation_ids) != len(set(self.operation_ids)):
+            raise ValueError("operation IDs must be unique")
+        return self
+
+
+class DexSafeWriteBatch(BaseModel):
+    contract_version: Literal["dex-safe-write-batch-v1"] = "dex-safe-write-batch-v1"
+    plan_id: int = Field(gt=0)
+    confirmation_code: str
+    commands: list[DexSafeWriteCommand] = Field(min_length=1, max_length=50)
+    recapture_required_after_attempt: Literal[True] = True
+
+
+class DexSafeWriteExecutionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str = Field(min_length=10, max_length=100)
+    succeeded: bool
+    outcome: Literal[
+        "succeeded",
+        "http_error",
+        "network_error",
+        "uncertain_addition",
+        "invalid_response",
+    ]
+    status: int | None = Field(default=None, ge=100, le=599)
+    attempts: int = Field(ge=1, le=3)
+
+
+class DexSafeWriteReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["dex-safe-write-report-v1"]
+    plan_id: int = Field(gt=0)
+    confirmation_code: str = Field(min_length=12, max_length=12, pattern=r"^[A-F0-9]{12}$")
+    results: list[DexSafeWriteExecutionResult] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def result_ids_are_unique(self) -> "DexSafeWriteReportRequest":
+        ids = [result.operation_id for result in self.results]
+        if len(ids) != len(set(ids)):
+            raise ValueError("operation result IDs must be unique")
+        return self
+
+
+class DexSafeWriteReportResult(BaseModel):
+    plan_id: int
+    succeeded: int
+    failed: int
+    fully_succeeded: bool
+    recapture_required: Literal[True] = True
 
 
 def process_collectr_capture(
@@ -237,6 +474,7 @@ def process_dex_capture(payload: object, database_path: Path) -> DexCompanionCap
     collection_entries = [entry for page in request.collection_pages for entry in page.result]
     catalog, unsupported_catalog = normalize_dex_catalog(catalog_cards)
     collection, unsupported_collection = normalize_dex_collection(collection_entries)
+    write_metadata = build_dex_write_metadata(catalog_cards, collection_entries)
     normalization_complete = not unsupported_catalog and not unsupported_collection
     engine = create_database(database_path)
     snapshot = DestinationReadSnapshot(
@@ -250,6 +488,7 @@ def process_dex_capture(payload: object, database_path: Path) -> DexCompanionCap
             "collection_pages": len(request.collection_pages),
             "unsupported_catalog_variants": unsupported_catalog,
             "unsupported_collection_quantities": unsupported_collection,
+            "write_metadata": write_metadata.model_dump(mode="json"),
             "destination_writes_enabled": False,
         },
     )
@@ -265,7 +504,15 @@ def process_dex_capture(payload: object, database_path: Path) -> DexCompanionCap
     )
 
 
-def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
+def process_dex_write_observations(payload: object) -> DexWriteObservationResult:
+    request = DexWriteObservationCapture.model_validate(payload)
+    return DexWriteObservationResult(
+        observations=request.observations,
+        observation_count=len(request.observations),
+    )
+
+
+def _build_dex_sync_plan(database_path: Path) -> tuple[SyncPlan, DestinationReadSnapshot]:
     engine = create_database(database_path)
     source = SourceCollectionRepository(engine).latest()
     destination = DestinationReadRepository(engine).get("dex")
@@ -286,23 +533,98 @@ def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
         source,
         destination.collection,
         matches,
-        DexAdapter().get_capabilities(),
+        DestinationCapabilities(
+            supported_games=frozenset({"pokemon"}),
+            additions=True,
+            quantity_increases=True,
+        ),
         SyncPolicy(),
         "dex",
         destructive_planning_allowed=False,
         managed_destination_ids=ManagedDestinationRepository(engine).list_ids("dex"),
     )
     if not destination.complete:
-        plan.warnings.append("Dex normalization is incomplete; writes remain blocked")
+        plan.warnings.append("Dex normalization is incomplete; destructive writes remain blocked")
+    return plan, destination
+
+
+def _safe_write_commands(
+    plan: SyncPlan,
+    destination: DestinationReadSnapshot,
+) -> list[DexSafeWriteCommand]:
+    metadata = DexWriteMetadata.model_validate(destination.metadata.get("write_metadata"))
+    commands: list[DexSafeWriteCommand] = []
+    for operation in plan.safe_write_operations:
+        destination_id = operation.destination_id
+        if destination_id is None:
+            raise SafeWriteUnavailable("safe_write_missing_destination_id")
+        if destination_id in metadata.ambiguous_destination_ids:
+            raise SafeWriteUnavailable("safe_write_ambiguous_quantity_key")
+        quantity_key = metadata.quantity_keys.get(destination_id)
+        if quantity_key is None:
+            raise SafeWriteUnavailable("safe_write_quantity_key_unavailable")
+        card_id, separator, _finish = destination_id.partition("::")
+        if not separator or not card_id:
+            raise SafeWriteUnavailable("safe_write_invalid_destination_id")
+        existing = metadata.collection_records.get(card_id)
+        if existing is None:
+            commands.append(
+                DexSafeWriteCommand(
+                    operation_id=operation.operation_id,
+                    method="POST",
+                    path="/api/user/cards",
+                    body=DexSafeWriteBody(
+                        cardId=card_id,
+                        quantities={quantity_key: operation.desired_quantity},
+                    ),
+                )
+            )
+            continue
+        quantities = dict(existing.quantities)
+        quantities[quantity_key] = operation.desired_quantity
+        commands.append(
+            DexSafeWriteCommand(
+                operation_id=operation.operation_id,
+                method="PATCH",
+                path=f"/api/user/cards/{existing.record_id}",
+                body=DexSafeWriteBody(cardId=card_id, quantities=quantities),
+            )
+        )
+    return commands
+
+
+def _safe_write_preview(
+    plan: SyncPlan,
+    destination: DestinationReadSnapshot,
+    audit: SyncAuditRepository,
+) -> tuple[list[DexSafeWriteCommand], str | None]:
+    if len(plan.safe_write_operations) > 50:
+        return [], "safe_write_batch_limit_exceeded"
+    if audit.has_write_attempt_for_state("dex", plan.destination_collection_fingerprint):
+        return [], "dex_recapture_required_after_write_attempt"
+    try:
+        return _safe_write_commands(plan, destination), None
+    except (SafeWriteUnavailable, ValidationError):
+        return [], "safe_write_metadata_unavailable"
+
+
+def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
+    engine = create_database(database_path)
+    plan, destination = _build_dex_sync_plan(database_path)
     changes = preview_changes(plan)
     maximum_changes = 2000
     counts = {kind.value: 0 for kind in OperationType}
     for change in changes:
         counts[change.change] += 1
-    pending_reviews = review_repository.list_pending("dex")
+    pending_reviews = MappingReviewRepository(engine).list_pending("dex")
     maximum_reviews = 500
+    safe_commands, safe_write_block_reason = _safe_write_preview(
+        plan,
+        destination,
+        SyncAuditRepository(engine),
+    )
     return CompanionSyncPreviewResult(
-        source_completeness=source.completeness.value,
+        source_completeness=plan.source_completeness.value,
         changes=changes[:maximum_changes],
         change_counts=counts,
         blocked_changes=sum(
@@ -310,12 +632,91 @@ def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
             for change in changes
         ),
         truncated=len(changes) > maximum_changes,
+        destination_writes_enabled=bool(safe_commands),
+        safe_write_confirmation_code=plan.confirmation_code if safe_commands else None,
+        safe_write_operation_ids=[command.operation_id for command in safe_commands],
+        safe_write_count=len(safe_commands),
+        safe_write_block_reason=safe_write_block_reason,
         mapping_reviews=[
             _companion_mapping_review(item) for item in pending_reviews[:maximum_reviews]
         ],
         mapping_review_count=len(pending_reviews),
         mapping_reviews_truncated=len(pending_reviews) > maximum_reviews,
         warnings=plan.warnings,
+    )
+
+
+def process_safe_write_prepare(
+    payload: object,
+    database_path: Path,
+) -> DexSafeWriteBatch:
+    request = DexSafeWritePrepareRequest.model_validate(payload)
+    engine = create_database(database_path)
+    plan, destination = _build_dex_sync_plan(database_path)
+    audit = SyncAuditRepository(engine)
+    commands, block_reason = _safe_write_preview(plan, destination, audit)
+    if block_reason is not None or not commands:
+        raise SafeWriteUnavailable(block_reason or "safe_write_unavailable")
+    if request.confirmation_code != plan.confirmation_code:
+        raise SafeWriteUnavailable("safe_write_confirmation_mismatch")
+    command_ids = [command.operation_id for command in commands]
+    if request.operation_ids != command_ids:
+        raise SafeWriteUnavailable("safe_write_operations_changed")
+    plan_id = audit.add_plan(plan)
+    audit.add_run(
+        plan_id,
+        SyncResult(
+            dry_run=False,
+            results=[
+                OperationResult(
+                    operation_id=command.operation_id,
+                    succeeded=False,
+                    message="safe write batch prepared; execution report pending",
+                )
+                for command in commands
+            ],
+        ),
+    )
+    return DexSafeWriteBatch(
+        plan_id=plan_id,
+        confirmation_code=plan.confirmation_code,
+        commands=commands,
+    )
+
+
+def process_safe_write_report(
+    payload: object,
+    database_path: Path,
+) -> DexSafeWriteReportResult:
+    request = DexSafeWriteReportRequest.model_validate(payload)
+    engine = create_database(database_path)
+    audit = SyncAuditRepository(engine)
+    plan = audit.get_plan(request.plan_id)
+    if plan.destination != "dex" or request.confirmation_code != plan.confirmation_code:
+        raise SafeWriteUnavailable("safe_write_report_not_authorized")
+    expected_ids = [operation.operation_id for operation in plan.safe_write_operations]
+    reported_ids = [item.operation_id for item in request.results]
+    if reported_ids != expected_ids:
+        raise SafeWriteUnavailable("safe_write_report_operations_changed")
+    result = SyncResult(
+        dry_run=False,
+        results=[
+            OperationResult(
+                operation_id=item.operation_id,
+                succeeded=item.succeeded,
+                message=item.outcome,
+            )
+            for item in request.results
+        ],
+    )
+    audit.add_run(request.plan_id, result)
+    ManagedDestinationRepository(engine).reconcile_successful_run(plan, result)
+    succeeded = sum(item.succeeded for item in request.results)
+    return DexSafeWriteReportResult(
+        plan_id=request.plan_id,
+        succeeded=succeeded,
+        failed=len(request.results) - succeeded,
+        fully_succeeded=result.succeeded,
     )
 
 
@@ -463,8 +864,13 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             200,
             {
                 "service": "card-relay-extension-companion",
-                "capture_contracts": ["collectr-extension-v1", "dex-extension-v1"],
-                "destination_writes_enabled": False,
+                "capture_contracts": [
+                    "collectr-extension-v1",
+                    "dex-extension-v1",
+                    "dex-write-observation-v1",
+                    "dex-safe-write-batch-v1",
+                ],
+                "destination_writes_enabled": True,
             },
         )
 
@@ -473,6 +879,9 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             "/v1/collectr/captures",
             "/v1/dex/captures",
             "/v1/dex/capture-chunks",
+            "/v1/dex/write-observations",
+            "/v1/dex/safe-write-batches",
+            "/v1/dex/safe-write-reports",
             "/v1/sync/previews",
             "/v1/mappings/decisions",
         }:
@@ -510,6 +919,12 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
                     )
             elif self.path == "/v1/dex/captures":
                 result = process_dex_capture(payload, self.server.database_path)
+            elif self.path == "/v1/dex/write-observations":
+                result = process_dex_write_observations(payload)
+            elif self.path == "/v1/dex/safe-write-batches":
+                result = process_safe_write_prepare(payload, self.server.database_path)
+            elif self.path == "/v1/dex/safe-write-reports":
+                result = process_safe_write_report(payload, self.server.database_path)
             elif self.path == "/v1/sync/previews":
                 result = process_sync_preview(self.server.database_path)
             elif self.path == "/v1/mappings/decisions":
@@ -554,6 +969,12 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             self._write_json(
                 409,
                 {"error": "mapping_decision_rejected", "reason": str(error)},
+            )
+            return
+        except SafeWriteUnavailable as error:
+            self._write_json(
+                409,
+                {"error": "safe_write_rejected", "reason": str(error)},
             )
             return
         except CardRelayError:

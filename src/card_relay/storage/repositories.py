@@ -552,3 +552,23 @@ class SyncAuditRepository:
             if row is None:
                 raise KeyError(f"sync plan {plan_id} does not exist")
             return SyncPlan.model_validate(json.loads(row.payload))
+
+    def has_write_attempt_for_state(
+        self,
+        destination: str,
+        destination_collection_fingerprint: str,
+    ) -> bool:
+        with Session(self.engine) as session:
+            payloads = session.scalars(
+                select(SyncPlanRow.payload)
+                .join(SyncRunRow, SyncRunRow.plan_id == SyncPlanRow.id)
+                .where(
+                    SyncPlanRow.destination_name == destination,
+                    SyncRunRow.dry_run == 0,
+                )
+            )
+            return any(
+                SyncPlan.model_validate_json(payload).destination_collection_fingerprint
+                == destination_collection_fingerprint
+                for payload in payloads
+            )

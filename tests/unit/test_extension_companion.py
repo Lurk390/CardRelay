@@ -10,11 +10,16 @@ from sqlalchemy.orm import Session
 
 from card_relay.extension.companion import (
     CollectrExtensionCapture,
+    DexWriteObservationCapture,
     MappingDecisionUnavailable,
+    SafeWriteUnavailable,
     SyncPreviewUnavailable,
     process_collectr_capture,
     process_dex_capture,
+    process_dex_write_observations,
     process_mapping_decision,
+    process_safe_write_prepare,
+    process_safe_write_report,
     process_sync_preview,
     serve_companion,
 )
@@ -41,6 +46,36 @@ def _payload() -> dict[str, object]:
             {"data": [{"company": "CGC", "grades": [{"id": 10, "grade": "10.0"}]}]}
         ],
         "exact_view_verified": True,
+    }
+
+
+def _write_observation_payload() -> dict[str, object]:
+    return {
+        "contract_version": "dex-write-observation-v1",
+        "observations": [
+            {
+                "method": "PATCH",
+                "origin_host": "api.dextcg.com",
+                "route_template": "/api/collections/{segment}/cards/{segment}",
+                "query_keys": ["account"],
+                "path_parameter_bindings": [{"segment_index": 4, "source": "request.cardId"}],
+                "request_shape": {
+                    "kind": "object",
+                    "fields": {
+                        "cardId": {"kind": "string", "format": "uuid"},
+                        "quantities": {
+                            "kind": "object",
+                            "fields": {"reverse_holo": {"kind": "integer"}},
+                        },
+                    },
+                },
+                "response_status": 200,
+                "response_shape": {
+                    "kind": "object",
+                    "fields": {"updated": {"kind": "boolean"}},
+                },
+            }
+        ],
     }
 
 
@@ -161,6 +196,63 @@ def test_companion_accepts_only_validated_dex_read_capture(tmp_path: Path) -> No
         assert payload["destination_writes_enabled"] is False
         assert "catalog" not in payload
         assert "collection" not in payload
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        thread.join(timeout=5)
+
+
+def test_dex_write_observation_contract_is_schema_only_and_keeps_writes_disabled() -> None:
+    result = process_dex_write_observations(_write_observation_payload())
+
+    assert result.observation_count == 1
+    assert result.destination_writes_enabled is False
+    assert result.observations[0].method == "PATCH"
+    assert result.observations[0].request_shape.fields["cardId"].format == "uuid"
+    assert result.observations[0].path_parameter_bindings[0].source == "request.cardId"
+    serialized = result.model_dump_json()
+    assert "value" not in serialized
+    assert "authorization" not in serialized.casefold()
+
+
+def test_dex_write_observation_rejects_scalar_values_and_unbounded_routes() -> None:
+    payload = _write_observation_payload()
+    observation = payload["observations"][0]  # type: ignore[index]
+    observation["request_shape"]["value"] = "must-not-cross"  # type: ignore[index]
+
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        DexWriteObservationCapture.model_validate(payload)
+
+    payload = _write_observation_payload()
+    observation = payload["observations"][0]  # type: ignore[index]
+    observation["route_template"] = "https://private.invalid/user-id"  # type: ignore[index]
+    with pytest.raises(ValidationError, match="string_pattern_mismatch"):
+        DexWriteObservationCapture.model_validate(payload)
+
+
+def test_companion_accepts_only_validated_dex_write_observations(tmp_path: Path) -> None:
+    server, token = serve_companion(tmp_path / "card-relay.db", 0, lambda: "test-token")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+    try:
+        connection.request(
+            "POST",
+            "/v1/dex/write-observations",
+            body=json.dumps(_write_observation_payload()),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        assert response.status == 201
+        assert payload["observation_count"] == 1
+        assert payload["destination_writes_enabled"] is False
+        assert "value" not in json.dumps(payload)
     finally:
         connection.close()
         server.shutdown()
@@ -287,12 +379,75 @@ def test_companion_mapping_endpoint_rejects_unoffered_id_then_refreshes_preview(
         payload = json.loads(response.read())
         assert response.status == 201
         assert payload["mapping_review_count"] == 0
-        assert payload["destination_writes_enabled"] is False
+        assert payload["destination_writes_enabled"] is True
     finally:
         connection.close()
         server.shutdown()
         server.server_close()
-        thread.join(timeout=5)
+
+
+def test_safe_dex_write_batch_is_confirmation_bound_and_requires_recapture(tmp_path: Path) -> None:
+    database_path = tmp_path / "card-relay.db"
+    process_collectr_capture(_payload(), database_path)
+    dex_capture = json.loads(DEX_FIXTURE.read_text(encoding="utf-8"))
+    dex_capture["collection_pages"][0]["result"][0]["quantities"]["friendBallHolo"] = 3
+    process_dex_capture(dex_capture, database_path)
+    review = process_sync_preview(database_path).mapping_reviews[0]
+    preview = process_mapping_decision(
+        {
+            "action": "confirm",
+            "source_fingerprint": review.source_fingerprint,
+            "destination_id": review.candidates[0].destination_id,
+        },
+        database_path,
+    )
+
+    assert preview.destination_writes_enabled is True
+    assert preview.safe_write_count == 1
+    assert preview.safe_write_confirmation_code is not None
+    with pytest.raises(SafeWriteUnavailable, match="confirmation_mismatch"):
+        process_safe_write_prepare(
+            {"confirmation_code": "A" * 12, "operation_ids": preview.safe_write_operation_ids},
+            database_path,
+        )
+
+    batch = process_safe_write_prepare(
+        {
+            "confirmation_code": preview.safe_write_confirmation_code,
+            "operation_ids": preview.safe_write_operation_ids,
+        },
+        database_path,
+    )
+
+    assert batch.commands[0].method == "PATCH"
+    assert batch.commands[0].origin == "https://clients.dextcg.com"
+    assert batch.commands[0].path == "/api/user/cards/fixture-collection-entry-1"
+    assert batch.commands[0].body.card_id == "fixture-card-1"
+    assert batch.commands[0].body.quantities["holo"] == 2
+    assert batch.commands[0].body.quantities["friendBallHolo"] == 3
+
+    report = process_safe_write_report(
+        {
+            "contract_version": "dex-safe-write-report-v1",
+            "plan_id": batch.plan_id,
+            "confirmation_code": batch.confirmation_code,
+            "results": [
+                {
+                    "operation_id": batch.commands[0].operation_id,
+                    "succeeded": True,
+                    "outcome": "succeeded",
+                    "status": 200,
+                    "attempts": 1,
+                }
+            ],
+        },
+        database_path,
+    )
+
+    assert report.fully_succeeded
+    blocked = process_sync_preview(database_path)
+    assert blocked.destination_writes_enabled is False
+    assert blocked.safe_write_block_reason == "dex_recapture_required_after_write_attempt"
 
 
 def test_sync_preview_reports_which_local_capture_is_missing(tmp_path: Path) -> None:
@@ -306,7 +461,7 @@ def test_sync_preview_reports_which_local_capture_is_missing(tmp_path: Path) -> 
         process_sync_preview(database_path)
 
 
-def test_extension_exposes_visual_diff_without_write_controls() -> None:
+def test_extension_exposes_visual_diff_and_safe_write_controls() -> None:
     popup = (EXTENSION / "popup.js").read_text(encoding="utf-8")
     background = (EXTENSION / "background.js").read_text(encoding="utf-8")
     html = (EXTENSION / "popup.html").read_text(encoding="utf-8")
@@ -319,7 +474,17 @@ def test_extension_exposes_visual_diff_without_write_controls() -> None:
     assert "Reject candidate" in popup
     assert "card-relay-mapping-decision" in popup
     assert "/v1/mappings/decisions" in background
-    assert "confirm-write" not in popup
+    assert "Arm schema-only observation" in html
+    assert "card-relay-dex-write-research-submit" in popup
+    assert "/v1/dex/write-observations" in background
+    assert "Reload the ${page} tab once, then reopen CardRelay." in popup
+    assert "issue.location" in popup
+    assert "payload.issues" in background
+    assert "Request schema:" in popup
+    assert "Apply safe Dex changes" in html
+    assert "card-relay-safe-write-prepare" in popup
+    assert "card-relay-dex-safe-write-execute" in popup
+    assert "/v1/dex/safe-write-batches" in background
 
 
 def test_companion_accepts_dex_capture_in_bounded_contiguous_chunks(tmp_path: Path) -> None:

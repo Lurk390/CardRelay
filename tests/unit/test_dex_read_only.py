@@ -7,7 +7,11 @@ from pydantic import ValidationError
 
 from card_relay.destinations.dex.adapter import DexAdapter
 from card_relay.destinations.dex.models import DexCapturedCard
-from card_relay.destinations.dex.normalizer import normalize_dex_catalog, normalize_dex_finish
+from card_relay.destinations.dex.normalizer import (
+    build_dex_write_metadata,
+    normalize_dex_catalog,
+    normalize_dex_finish,
+)
 from card_relay.domain.enums import Finish
 from card_relay.exceptions import IntegrationUnavailableError
 from card_relay.extension.companion import DexExtensionCapture, process_dex_capture
@@ -26,6 +30,7 @@ def _payload() -> dict[str, object]:
 def test_dex_finish_normalization_is_explicit() -> None:
     assert normalize_dex_finish("Reverse_Holo") is Finish.REVERSE_HOLO
     assert normalize_dex_finish("Holofoil") is Finish.HOLO
+    assert normalize_dex_finish("reverseHolo") is Finish.REVERSE_HOLO
     assert normalize_dex_finish("unknown treatment") is None
 
 
@@ -43,6 +48,23 @@ def test_dex_catalog_normalization_expands_variants() -> None:
     assert records[0].identity.set_code == "fixture-set-1"
     assert records[0].identity.collector_number == "1"
     assert records[0].identity.language == "unknown"
+
+
+def test_dex_write_metadata_preserves_record_id_full_map_and_quantity_keys() -> None:
+    request = DexExtensionCapture.model_validate(_payload())
+    cards = [card for page in request.catalog_pages for card in page.result]
+    entries = [entry for page in request.collection_pages for entry in page.result]
+
+    metadata = build_dex_write_metadata(cards, entries)
+
+    record = metadata.collection_records["fixture-card-1"]
+    assert record.record_id == "fixture-collection-entry-1"
+    assert record.quantities == {"holo": 1}
+    assert metadata.quantity_keys == {
+        "fixture-card-1::holo": "holo",
+        "fixture-card-1::normal": "normal",
+    }
+    assert metadata.ambiguous_destination_ids == []
 
 
 def test_dex_unknown_variant_is_reported_not_guessed() -> None:
@@ -98,6 +120,11 @@ def test_dex_capture_persists_normalized_read_snapshot_and_cache(tmp_path: Path)
     assert snapshot.complete
     assert len(snapshot.catalog) == 2
     assert snapshot.collection[0].destination_id == "fixture-card-1::holo"
+    assert snapshot.metadata["write_metadata"]["collection_records"]["fixture-card-1"] == {
+        "record_id": "fixture-collection-entry-1",
+        "card_id": "fixture-card-1",
+        "quantities": {"holo": 1},
+    }
     cached = CatalogCacheRepository(engine).get("dex")
     assert cached is not None
     assert cached[1] == snapshot.catalog

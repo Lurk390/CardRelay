@@ -10,6 +10,7 @@ const observerSource = readFileSync(
 
 function responseFor(payload) {
   return {
+    status: 200,
     headers: { get: name => name === "content-type" ? "application/json" : null },
     clone: () => ({ text: async () => JSON.stringify(payload) })
   };
@@ -21,12 +22,41 @@ function runObserver(payload) {
   const payloads = Array.isArray(payload) ? [...payload] : [payload];
   class FakeRequest {
     constructor(input, init = {}) {
+      if (input instanceof FakeRequest && !init.__cloning) {
+        if (input.bodyUsed) throw new TypeError("Request body is already used");
+        input.bodyUsed = true;
+      }
       this.url = input instanceof FakeRequest ? input.url : String(input);
       this.method = init.method || (input instanceof FakeRequest ? input.method : "GET");
+      this.body = init.body ?? (input instanceof FakeRequest ? input.body : "");
+      this.bodyUsed = false;
+      const headers = init.headers || (input instanceof FakeRequest ? input.rawHeaders : {});
+      this.rawHeaders = headers;
+      this.headers = {
+        get: name => Object.entries(headers).find(
+          ([key]) => key.toLowerCase() === name.toLowerCase()
+        )?.[1] || null
+      };
+    }
+    clone() {
+      if (this.bodyUsed) throw new TypeError("Request body is already used");
+      return new FakeRequest(this, {
+        __cloning: true,
+        body: this.body,
+        headers: this.rawHeaders
+      });
+    }
+    async text() {
+      return String(this.body || "");
     }
   }
   const pageWindow = {
-    fetch: async () => responseFor(payloads.shift() ?? payloads.at(-1)),
+    fetch: async input => {
+      if (input instanceof FakeRequest && input.bodyUsed) {
+        throw new TypeError("Dex received a consumed Request body");
+      }
+      return responseFor(payloads.length > 1 ? payloads.shift() : payloads[0]);
+    },
     addEventListener(type, listener) {
       listeners.set(type, listener);
     },
@@ -37,6 +67,7 @@ function runObserver(payload) {
   function FakeXmlHttpRequest() {}
   FakeXmlHttpRequest.prototype.open = function () {};
   FakeXmlHttpRequest.prototype.addEventListener = function () {};
+  FakeXmlHttpRequest.prototype.send = function () {};
   const context = vm.createContext({
     JSON,
     Request: FakeRequest,
@@ -46,7 +77,7 @@ function runObserver(payload) {
     window: pageWindow
   });
   vm.runInContext(observerSource, context);
-  return { listeners, messages, pageWindow };
+  return { FakeRequest, listeners, messages, pageWindow };
 }
 
 function arm(observed, target) {
@@ -90,6 +121,7 @@ test("Dex collection capture strips account and unrelated catalog metadata", asy
     page: 1,
     pageSize: 20,
     result: [{
+      id: "private-collection-record-id",
       cardId: "private-card-id",
       card,
       quantities: { holo: 2 },
@@ -142,4 +174,107 @@ test("Dex observer keeps separate card streams from overwriting the largest cata
   assert.equal(observed.messages.length, 1);
   assert.equal(observed.messages[0].payload.totalItems, 100);
   assert.equal(observed.messages[0].payload.result[0].cardId, "large-card");
+});
+
+test("Dex write research emits schema only after explicit arming", async () => {
+  const observed = runObserver({
+    updated: true,
+    cardId: "response-private-card-id"
+  });
+  const request = {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      cardId: "2f709ce8-f1c4-4ac7-a614-79d640f5dd8a",
+      quantities: { reverse_holo: 7 },
+      note: "private collection note"
+    })
+  };
+
+  await observed.pageWindow.fetch(
+    "https://api.dextcg.com/api/collections/private-user-id/cards/2f709ce8-f1c4-4ac7-a614-79d640f5dd8a?account=private-account",
+    request
+  );
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(observed.messages, []);
+
+  arm(observed, "write-research");
+  await observed.pageWindow.fetch(
+    "https://api.dextcg.com/api/collections/private-user-id/cards/2f709ce8-f1c4-4ac7-a614-79d640f5dd8a?account=private-account",
+    request
+  );
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(observed.messages.length, 1);
+  const observation = observed.messages[0].payload;
+  assert.equal(observation.method, "PATCH");
+  assert.equal(observation.origin_host, "api.dextcg.com");
+  assert.equal(observation.route_template, "/api/collections/{segment}/cards/{segment}");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(observation.path_parameter_bindings)),
+    [{ segment_index: 4, source: "request.cardId" }]
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(observation.query_keys)),
+    ["account"]
+  );
+  assert.equal(observation.request_shape.fields.cardId.kind, "string");
+  assert.equal(observation.request_shape.fields.quantities.fields.reverse_holo.kind, "integer");
+  assert.equal(observation.response_shape.fields.updated.kind, "boolean");
+  const serialized = JSON.stringify(observed.messages[0]);
+  for (const privateValue of [
+    "private-user-id",
+    "2f709ce8-f1c4-4ac7-a614-79d640f5dd8a",
+    "private-account",
+    "private collection note",
+    "response-private-card-id"
+  ]) {
+    assert.ok(!serialized.includes(privateValue));
+  }
+
+  await observed.pageWindow.fetch(
+    "https://rum.dextcg.com/v1/events",
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
+  );
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(observed.messages.length, 1);
+});
+
+test("Dex write research records bodyless deletes without exposing route identifiers", async () => {
+  const observed = runObserver({ deleted: true });
+  arm(observed, "write-research");
+
+  await observed.pageWindow.fetch(
+    "https://api.dextcg.com/api/collections/private-user-id/cards/private-card-id",
+    { method: "DELETE" }
+  );
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(observed.messages.length, 1);
+  const observation = observed.messages[0].payload;
+  assert.equal(observation.method, "DELETE");
+  assert.equal(observation.route_template, "/api/collections/{segment}/cards/{segment}");
+  assert.equal(observation.request_shape.kind, "null");
+  const serialized = JSON.stringify(observation);
+  assert.ok(!serialized.includes("private-user-id"));
+  assert.ok(!serialized.includes("private-card-id"));
+});
+
+test("Dex write research never consumes Dex's original Request body", async () => {
+  const observed = runObserver({ updated: true });
+  arm(observed, "write-research");
+  const request = new observed.FakeRequest(
+    "https://api.dextcg.com/api/collections/private/cards/private",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quantities: { normal: 2 } })
+    }
+  );
+
+  await observed.pageWindow.fetch(request);
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(observed.messages.length, 1);
+  assert.equal(observed.messages[0].payload.method, "PATCH");
 });

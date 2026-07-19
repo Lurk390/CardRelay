@@ -1,6 +1,6 @@
 # CardRelay browser bridge
 
-This unpacked Manifest V3 extension captures Collectr source data and Dex read-only destination data from the user's normal authenticated Chrome tabs. It sends sanitized captures only to CardRelay's loopback companion. It does not read passwords, cookies, authorization headers, or unrelated pages. Destination writes are disabled.
+This unpacked Manifest V3 extension captures Collectr source data and Dex destination data from the user's normal authenticated Chrome tabs. It sends sanitized captures only to CardRelay's loopback companion. It does not read passwords, cookies, authorization headers, or unrelated pages. After an explicit preview confirmation it can make only verified Dex additions and quantity increases.
 
 ## Load and run locally
 
@@ -25,11 +25,19 @@ This unpacked Manifest V3 extension captures Collectr source data and Dex read-o
 4. Keep the tab open while CardRelay loads the verified pagination sequence at a 200 ms interval. You do not need to scroll the catalog.
 5. Refresh status until the captured and expected page counts match, then select **Send Dex read-only preview**.
 
-Dex catalog pages stay only in the current tab's memory. Sanitized collection pages use session storage so navigation does not discard them. Submission is split into small, ordered loopback requests; the companion rejects gaps, reordered chunks, incomplete pagination, conflicting totals, oversized captures, and changed schemas. A successful preview stores normalized counts and reports unsupported finish labels without exposing card data. Dex writes remain disabled.
+Dex catalog pages stay only in the current tab's memory. Sanitized collection pages use session storage so navigation does not discard them. Submission is split into small, ordered loopback requests; the companion rejects gaps, reordered chunks, incomplete pagination, conflicting totals, oversized captures, and changed schemas. A successful preview stores normalized counts and reports unsupported finish labels without exposing card data.
 
-After storing both a Collectr capture and a Dex capture, select **Build visual diff**. The popup groups additions and increases separately from decreases and removals, shows Dex and Collectr quantities for each card, and highlights unresolved or unmanaged records. The companion returns at most 2,000 changes and the popup renders at most 250 at once; summary counts cover the full plan and truncation is explicit. This view is informational while Dex writes remain disabled.
+After storing both a Collectr capture and a Dex capture, select **Build visual diff**. The popup groups additions and increases separately from decreases and removals, shows Dex and Collectr quantities for each card, and highlights unresolved or unmanaged records. The companion returns at most 2,000 changes and the popup renders at most 250 at once; summary counts cover the full plan and truncation is explicit.
+
+If every safe change has a verified quantity key and the diff is not stale, the popup shows **Apply safe Dex changes**. Verify the cards and quantities, type the displayed 12-character confirmation code, and apply from an open Dex tab. CardRelay sends additions with `POST https://clients.dextcg.com/api/user/cards`; it updates existing records with an absolute full quantity map using `PATCH https://clients.dextcg.com/api/user/cards/{collectionRecordId}`. PATCH may retry transient failures; POST never retries automatically because a lost response could make the result uncertain. Every attempt requires a new Dex capture before another batch can be prepared. Decreases and removals remain unavailable.
 
 Probable and ambiguous Pokémon matches appear under **Match review**. Compare the card name, set, collector number, finish, score, and highlighted identity differences. Select the intended Dex candidate and choose **Confirm match**, or choose **Reject candidate** to prevent that pairing. The popup renders 50 pending records at a time and refreshes after each decision. Decisions are stored in CardRelay's local SQLite database, not extension storage, and therefore survive browser or companion restarts. Before saving, the companion reruns matching against the latest source and Dex snapshots and accepts only a candidate offered by that current result; a stale popup must rebuild the diff.
+
+## Dex write-contract research
+
+This development-only mode observes schema; it does not perform a write. Open Dex, choose **Arm schema-only observation**, and then manually make one small, reversible collection change in Dex. Reopen CardRelay, verify that the write-observation count increased, and choose **Validate observed schema**. The result shows the method, redacted route template, query-key names, top-level request fields, response status, and response shape.
+
+Arming is explicit and expires on navigation or when another capture starts. At most ten JSON requests are retained in tab memory. The main-world observer discards every scalar value, replaces dynamic route segments and property names, never reads headers other than content type, and never exports a full URL, cookie, authorization value, account identifier, card identifier, quantity, note, or response value. The companion rejects extra fields, scalar values, over-deep structures, oversized structures, and unsanitized routes. Validation does not persist the observation and never authorizes request replay.
 
 After editing extension files, use **Reload** on the extension card at `chrome://extensions` and reload open Collectr or Dex tabs. A content-script-unavailable message almost always means the active tab predates the latest extension load.
 
@@ -45,6 +53,8 @@ If Collectr neither requests nor has a valid cached condition or grading lookup 
 
 ## Troubleshooting
 
+- If CardRelay says it is not active in a Collectr or Dex tab, the unpacked extension was likely reloaded after that page loaded. Reload the site tab once, then reopen CardRelay. When updating local extension code, always reload CardRelay first and the site tab second.
+
 - **Pairing required:** copy the current token from the running companion and save it again.
 - **Companion unavailable:** keep `extension serve` running and verify the port. Restarting it creates a new token that must be saved again.
 - **Capture not ready:** restart from Collectr's portfolio overview; aggregate and conflicting pages are rejected.
@@ -53,6 +63,7 @@ If Collectr neither requests nor has a valid cached condition or grading lookup 
 - **Dex capture not ready:** complete the Collection step first, then keep one Search tab open until all catalog pages are captured.
 - **Dex normalization incomplete:** pagination succeeded, but one or more finish labels are not mapped. The snapshot remains read-only and incomplete; report the non-sensitive label diagnostics rather than guessing.
 - **Mapping unchanged / stale:** the source capture, Dex capture, or prior mapping changed after the popup loaded. Select **Build visual diff** and review the current candidate again.
+- **No write observation:** arm research immediately before manually changing a single collection quantity. Navigation and extension reloads intentionally clear the in-memory research state.
 
 ## Current limits
 
@@ -61,5 +72,6 @@ If Collectr neither requests nor has a valid cached condition or grading lookup 
 - A complete capture requires contiguous 30-record pages, the empty terminal page, exact/unstacked records, recognized condition and grading metadata, and a visible-total match.
 - Browser snapshots can never authorize decreases or removals at this stage.
 - Mapping confirmations only resolve identity; they do not approve a write or destructive operation.
-- The visual diff has no write-confirmation control until all Dex write contracts and read-after-write checks are verified.
-- The popup cannot write to Dex or any other destination.
+- Write-contract research is schema-only, in-memory, explicitly armed, and cannot replay a request.
+- The visual diff can apply only additions and quantity increases after the displayed confirmation code is typed.
+- The popup cannot decrease quantities, remove cards, or write to any destination other than Dex.

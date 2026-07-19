@@ -4,17 +4,21 @@
   const channel = "card-relay.dex.v1";
   const maximumPages = 1000;
   const catalogPagesPerChunk = 8;
+  const maximumWriteObservations = 10;
+  const maximumWriteObservationBytes = 256 * 1024;
   const storageKey = "cardRelayDexCaptureV1";
   const pages = {
     collection: new Map(),
     catalog: new Map()
   };
   const conflicts = { collection: false, catalog: false };
+  const writeObservations = [];
+  const safeWriteRequests = new Map();
   let activeTarget = null;
 
   function serializedState() {
     return {
-      activeTarget,
+      activeTarget: ["collection", "catalog"].includes(activeTarget) ? activeTarget : null,
       conflicts: { ...conflicts },
       collectionPages: ordered("collection"),
       // The full Dex catalog can exceed extension storage quotas. It remains
@@ -62,6 +66,22 @@
     if (event.source !== window || event.origin !== location.origin) return;
     const message = event.data;
     if (!message || message.channel !== channel) return;
+    if (message.type === "write-observation" && message.target === "write-research") {
+      if (writeObservations.length < maximumWriteObservations &&
+        message.payload && typeof message.payload === "object" &&
+        JSON.stringify(message.payload).length <= maximumWriteObservationBytes) {
+        writeObservations.push(message.payload);
+      }
+      return;
+    }
+    if (message.type === "safe-write-result" && typeof message.requestId === "string") {
+      const settle = safeWriteRequests.get(message.requestId);
+      if (settle) {
+        safeWriteRequests.delete(message.requestId);
+        settle(Array.isArray(message.results) ? message.results : []);
+      }
+      return;
+    }
     if (!["collection", "catalog"].includes(message.target)) return;
     if (message.type === "stream-reset") {
       pages[message.target].clear();
@@ -112,14 +132,23 @@
       collectionComplete: complete("collection"),
       catalogComplete: complete("catalog"),
       collectionConflict: conflicts.collection,
-      catalogConflict: conflicts.catalog
+      catalogConflict: conflicts.catalog,
+      writeResearchArmed: activeTarget === "write-research",
+      writeObservationCount: writeObservations.length
     };
   }
 
   async function start(target) {
-    if (!["collection", "catalog"].includes(target)) {
+    if (!["collection", "catalog", "write-research"].includes(target)) {
       return { ok: false, error: "invalid_capture_target" };
     }
+    if (target === "write-research") {
+      writeObservations.length = 0;
+      activeTarget = target;
+      window.postMessage({ channel, type: "capture-control", target }, location.origin);
+      return { ok: true, status: status() };
+    }
+    writeObservations.length = 0;
     pages[target].clear();
     conflicts[target] = false;
     activeTarget = target;
@@ -170,6 +199,46 @@
         return response;
       }).then(sendResponse)
         .catch(() => sendResponse({ ok: false, error: "companion_unavailable" }));
+      return true;
+    }
+    if (message?.type === "card-relay-dex-write-research-submit") {
+      ready.then(async () => {
+        if (writeObservations.length === 0) {
+          return { ok: false, error: "write_observation_required", status: status() };
+        }
+        activeTarget = null;
+        window.postMessage({ channel, type: "capture-control", target: null }, location.origin);
+        const response = await chrome.runtime.sendMessage({
+          type: "card-relay-companion-submit",
+          capture: {
+            contract_version: "dex-write-observation-v1",
+            observations: writeObservations
+          }
+        });
+        if (response?.ok) writeObservations.length = 0;
+        return response;
+      }).then(sendResponse)
+        .catch(() => sendResponse({ ok: false, error: "companion_unavailable" }));
+      return true;
+    }
+    if (message?.type === "card-relay-dex-safe-write-execute") {
+      const requestId = crypto.randomUUID();
+      new Promise(resolve => {
+        safeWriteRequests.set(requestId, resolve);
+        window.postMessage({
+          channel,
+          type: "safe-write-execute",
+          requestId,
+          batch: message.batch
+        }, location.origin);
+        setTimeout(() => {
+          const settle = safeWriteRequests.get(requestId);
+          if (settle) {
+            safeWriteRequests.delete(requestId);
+            settle([]);
+          }
+        }, 30000);
+      }).then(results => sendResponse({ ok: results.length > 0, results }));
       return true;
     }
     return false;

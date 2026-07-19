@@ -2,6 +2,18 @@
 
 Using only one's own visible authenticated session, document login expiry, catalog identifiers/search, collection reads, add/update/remove behavior, validation errors, rate limits, idempotency, and timeouts. Sanitize fixture URLs, headers, cookies, tokens, user identifiers, and collection data. Do not ship private endpoints or enable writes until contracts and retries are tested.
 
+## Extension write-schema observation
+
+The unpacked extension provides the preferred research boundary for write contracts because it runs in the user's normal authenticated Chrome session without reading credentials. The user must explicitly arm **Dex write-contract research** and manually perform one small, reversible collection change. CardRelay does not initiate or replay that request.
+
+Before an observation leaves the page, CardRelay removes all scalar values and records only a bounded JSON shape, HTTP method, response status, the validated Dex service hostname, query-key names, and an origin-free route template whose unknown segments are replaced with `{segment}`. When exact equality is observed, it may also record a value-free relationship such as `segment 3 = request.cardId`; the identifier value itself remains private. Dynamic property names become `{dynamic_key}`. Only HTTPS `/api/...` requests to `dextcg.com` or its subdomains are eligible, so analytics and performance telemetry are ignored even when Dex routes it through a Dex-owned host. Full URLs, non-Dex hosts, headers other than a transient content-type check, cookies, tokens, account/card identifiers, quantities, notes, and response values never cross the page boundary. The companion validates that schema-only contract and echoes it for local inspection without persisting it.
+
+## Verified safe-write contract
+
+The observed Dex host is `clients.dextcg.com`. Adding a collection card uses `POST /api/user/cards` with `cardId` and a `quantities` object, returning `201`. Updating an existing collection record uses `PATCH /api/user/cards/{collectionRecordId}` with the card ID and the **complete** quantities object, returning `200`; the path value corresponds to `response.id`, not the catalog card ID. Both response shapes include `cardId`, `id`, `quantities`, timestamps, and `userId`.
+
+CardRelay uses only these two verified operations, only after a state-bound visual preview and typed confirmation code. It preserves all raw Dex quantity keys when PATCHing, retries PATCH only for transient failures, and does not automatically retry POST. It never enables quantity decreases or removals. A Dex recapture is required after every write attempt, including an uncertain one.
+
 The initial research harness opens `https://app.dextcg.com/` in a visible persistent local Chromium profile. `card-relay dex inspect` reports response counts and status classes only. It never records URLs, headers, cookies, or bodies. This metadata can establish whether structured responses exist but cannot establish their schema or collection completeness.
 
 Schema research is a separate, explicitly acknowledged mode. `card-relay dex inspect-schema`

@@ -6,6 +6,7 @@
       "pageSize": 20,
       "result": [
         {
+          "id": "fixture-collection-entry-1",
           "cardId": "fixture-card-1",
           "card": {
             "cardId": "fixture-card-1",
