@@ -43,6 +43,22 @@ def match_collection(
     rejected = rejected or {}
     normalized_catalog = normalize_destination_catalog(catalog)
     by_id = {record.destination_id: record for record in normalized_catalog}
+    by_fingerprint: dict[str, list[DestinationCatalogRecord]] = {}
+    by_code_anchor: dict[tuple[Any, ...], list[DestinationCatalogRecord]] = {}
+    by_name_anchor: dict[tuple[Any, ...], list[DestinationCatalogRecord]] = {}
+    by_name_anchor_without_code: dict[tuple[Any, ...], list[DestinationCatalogRecord]] = {}
+    for record in normalized_catalog:
+        identity = record.identity
+        by_fingerprint.setdefault(identity.fingerprint, []).append(record)
+        if identity.set_code:
+            by_code_anchor.setdefault(
+                (identity.game, identity.collector_number, identity.set_code), []
+            ).append(record)
+        if identity.set_name is not None:
+            name_anchor = (identity.game, identity.collector_number, identity.set_name)
+            by_name_anchor.setdefault(name_anchor, []).append(record)
+            if not identity.set_code:
+                by_name_anchor_without_code.setdefault(name_anchor, []).append(record)
     results: list[MatchResult] = []
     for entry in sorted(source.entries, key=lambda item: item.fingerprint):
         fingerprint = entry.fingerprint
@@ -71,9 +87,8 @@ def match_collection(
         excluded_ids = rejected.get(fingerprint, set())
         exact_candidates = [
             record
-            for record in normalized_catalog
-            if record.identity.fingerprint == entry.identity.fingerprint
-            and record.destination_id not in excluded_ids
+            for record in by_fingerprint.get(entry.identity.fingerprint, [])
+            if record.destination_id not in excluded_ids
         ]
         if len(exact_candidates) == 1:
             candidate = exact_candidates[0]
@@ -112,7 +127,12 @@ def match_collection(
         probable = (
             _probable_candidates(
                 entry.identity,
-                normalized_catalog,
+                _anchored_candidates(
+                    entry.identity,
+                    by_code_anchor,
+                    by_name_anchor,
+                    by_name_anchor_without_code,
+                ),
                 excluded_ids,
                 require_variant_match=require_variant_match,
                 require_language_match=require_language_match,
@@ -173,6 +193,28 @@ def match_collection(
             )
         )
     return results
+
+
+def _anchored_candidates(
+    source: CanonicalCardIdentity,
+    by_code_anchor: dict[tuple[Any, ...], list[DestinationCatalogRecord]],
+    by_name_anchor: dict[tuple[Any, ...], list[DestinationCatalogRecord]],
+    by_name_anchor_without_code: dict[tuple[Any, ...], list[DestinationCatalogRecord]],
+) -> list[DestinationCatalogRecord]:
+    if source.set_code:
+        candidates = list(
+            by_code_anchor.get((source.game, source.collector_number, source.set_code), [])
+        )
+        if source.set_name is not None:
+            candidates.extend(
+                by_name_anchor_without_code.get(
+                    (source.game, source.collector_number, source.set_name), []
+                )
+            )
+        return candidates
+    if source.set_name is None:
+        return []
+    return by_name_anchor.get((source.game, source.collector_number, source.set_name), [])
 
 
 def _probable_candidates(

@@ -1,3 +1,4 @@
+import card_relay.matching.matcher as matcher
 from card_relay.domain.enums import Finish, IngestionMethod, MatchStatus
 from card_relay.domain.models import (
     CanonicalCardIdentity,
@@ -131,6 +132,51 @@ def test_probable_match_uses_strong_anchors_and_explains_score() -> None:
     assert result.mismatched_fields == ["card_name"]
     assert "collector_number" in result.matched_fields
     assert result.alternatives[0].reasons[-1].startswith("normalized card-name similarity")
+
+
+def test_probable_matching_indexes_strong_anchors_without_changing_set_fallback(
+    monkeypatch,
+) -> None:
+    source_identity = CanonicalCardIdentity(
+        card_name="Embermouse",
+        set_name="Mythic Sparks",
+        set_code="MSP",
+        collector_number="1",
+    )
+    unrelated = [
+        DestinationCatalogRecord(
+            destination_id=f"unrelated-{index}",
+            identity=CanonicalCardIdentity(
+                card_name=f"Other {index}",
+                set_name="Other Set",
+                set_code="OTHER",
+                collector_number=str(index),
+            ),
+        )
+        for index in range(1_000)
+    ]
+    fallback = DestinationCatalogRecord(
+        destination_id="fallback",
+        identity=source_identity.model_copy(update={"card_name": "embermous", "set_code": None}),
+    )
+    anchor_checks = 0
+    original = matcher._has_strong_anchors
+
+    def counted_anchor_check(
+        source: CanonicalCardIdentity, destination: CanonicalCardIdentity
+    ) -> bool:
+        nonlocal anchor_checks
+        anchor_checks += 1
+        return original(source, destination)
+
+    monkeypatch.setattr(matcher, "_has_strong_anchors", counted_anchor_check)
+
+    result = match_collection(_collection(source_identity), [*unrelated, fallback])[0]
+
+    assert result.status is MatchStatus.PROBABLE
+    assert result.candidate is not None
+    assert result.candidate.destination_id == "fallback"
+    assert anchor_checks == 1
 
 
 def test_probable_matching_never_uses_card_name_without_set_and_number_anchors() -> None:
