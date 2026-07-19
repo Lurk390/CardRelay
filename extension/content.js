@@ -10,6 +10,7 @@
   let conflictingPageObserved = false;
   let captureRunning = false;
   let captureActive = false;
+  let reliabilityRunsRemaining = 0;
   let visibleTotalQuantity = null;
 
   function uniquePayloads(payloads) {
@@ -25,6 +26,7 @@
     await chrome.storage.session.set({
       [sessionKey]: {
         active,
+        reliabilityRunsRemaining,
         visibleTotalQuantity,
         conditionPayloads,
         gradingPayloads
@@ -118,6 +120,34 @@
 
   const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
+  function capturePayload() {
+    return {
+      contract_version: "collectr-extension-v1",
+      product_pages: orderedPages(),
+      visible_total_quantity: visibleTotalQuantity,
+      condition_payloads: conditionPayloads,
+      grading_payloads: gradingPayloads,
+      exact_view_verified: exactViewVerified
+    };
+  }
+
+  async function submitCapture(reliabilityCapture = false) {
+    if (productPages.size === 0 || conflictingPageObserved || !offsetsContiguous() || !exactViewVerified) {
+      return { ok: false, error: "capture_not_ready", status: status() };
+    }
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "card-relay-companion-submit",
+        capture: capturePayload(),
+        reliabilityCapture
+      });
+      if (response?.ok) resetCapture();
+      return response;
+    } catch {
+      return { ok: false, error: "companion_unavailable" };
+    }
+  }
+
   async function autoScroll() {
     if (captureRunning || !location.pathname.startsWith("/portfolio/products")) return;
     captureActive = true;
@@ -133,13 +163,27 @@
       window.scrollTo(0, document.documentElement.scrollHeight);
     }
     captureRunning = false;
+    if (reliabilityRunsRemaining > 0) {
+      const response = await submitCapture(true);
+      reliabilityRunsRemaining -= 1;
+      const complete = response?.ok && response.result?.completeness === "complete" &&
+        response.result?.invalid_record_count === 0 && response.result?.pagination_complete;
+      if (complete && reliabilityRunsRemaining > 0) {
+        captureActive = true;
+        await persistSessionState(true);
+        window.location.reload();
+        return;
+      }
+      reliabilityRunsRemaining = 0;
+    }
     captureActive = false;
     await persistSessionState(false);
   }
 
-  async function prepareCapture() {
+  async function prepareCapture(reliabilityRuns = 0) {
     resetCapture();
     captureActive = true;
+    reliabilityRunsRemaining = reliabilityRuns;
     window.postMessage({ channel, type: "lookup-request" }, location.origin);
     const observedTotal = visibleCardTotal();
     if (observedTotal !== null) visibleTotalQuantity = observedTotal;
@@ -156,36 +200,14 @@
       return false;
     }
     if (message?.type === "card-relay-start") {
-      prepareCapture().then(result => {
+      prepareCapture(Number.isInteger(message.reliabilityRuns) ? message.reliabilityRuns : 0).then(result => {
         sendResponse({ ok: true, ...result });
         if (!result.navigateToProducts) void autoScroll();
       }).catch(() => sendResponse({ ok: false, error: "capture_start_failed" }));
       return true;
     }
     if (message?.type === "card-relay-submit") {
-      if (
-        productPages.size === 0 ||
-        conflictingPageObserved ||
-        !offsetsContiguous() ||
-        !exactViewVerified
-      ) {
-        sendResponse({ ok: false, error: "capture_not_ready", status: status() });
-        return false;
-      }
-      const capture = {
-        contract_version: "collectr-extension-v1",
-        product_pages: orderedPages(),
-        visible_total_quantity: visibleTotalQuantity,
-        condition_payloads: conditionPayloads,
-        grading_payloads: gradingPayloads,
-        exact_view_verified: exactViewVerified
-      };
-      chrome.runtime.sendMessage({ type: "card-relay-companion-submit", capture })
-        .then(response => {
-          if (response?.ok) resetCapture();
-          sendResponse(response);
-        })
-        .catch(() => sendResponse({ ok: false, error: "companion_unavailable" }));
+      submitCapture().then(sendResponse);
       return true;
     }
     return false;
@@ -195,6 +217,9 @@
     const capture = stored[sessionKey];
     if (!capture) return;
     captureActive = capture.active === true;
+    reliabilityRunsRemaining = Number.isInteger(capture.reliabilityRunsRemaining)
+      ? capture.reliabilityRunsRemaining
+      : 0;
     visibleTotalQuantity = Number.isInteger(capture.visibleTotalQuantity)
       ? capture.visibleTotalQuantity
       : null;

@@ -47,6 +47,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         cache: "no-store"
       });
       const payload = await response.json();
+      if (response.ok && message.reliabilityCapture === true) {
+        const existing = settings.reliabilitySeries;
+        if (existing?.version === 1 && Array.isArray(existing.captures)) {
+          existing.captures.push({
+            collection_fingerprint: payload.collection_fingerprint,
+            completeness: payload.completeness,
+            unique_entries: payload.unique_entries,
+            total_quantity: payload.total_quantity,
+            pagination_complete: payload.pagination_complete,
+            invalid_record_count: payload.invalid_record_count
+          });
+          await chrome.storage.local.set({ reliabilitySeries: existing });
+        }
+      }
       sendResponse(response.ok
         ? { ok: true, result: payload }
         : {

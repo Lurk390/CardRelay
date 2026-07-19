@@ -258,7 +258,7 @@ document.querySelector("#save").addEventListener("click", async () => {
   statusElement.textContent = "Pairing saved locally in this extension profile.";
 });
 
-async function startCapture() {
+async function startCapture(reliabilityRuns = 0) {
   const { tab, service } = await activeSupportedTab();
   if (service === "dex") {
     const response = await sendToContentScript(tab, service, {
@@ -269,7 +269,10 @@ async function startCapture() {
     displayDexStatus(response.status);
     return;
   }
-  const response = await sendToContentScript(tab, service, { type: "card-relay-start" });
+  const response = await sendToContentScript(tab, service, {
+    type: "card-relay-start",
+    reliabilityRuns
+  });
   if (!response?.ok) throw new Error("Unable to start capture. Reload Collectr and retry.");
   if (response.navigateToProducts) {
     await chrome.tabs.update(tab.id, { url: "https://app.getcollectr.com/portfolio/products" });
@@ -281,7 +284,7 @@ async function startCapture() {
 
 startButton.addEventListener("click", async () => {
   try {
-    await startCapture();
+    await startCapture(5);
   } catch (error) {
     statusElement.textContent = error.message;
   }
