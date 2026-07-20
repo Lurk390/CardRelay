@@ -483,10 +483,11 @@ def test_extension_exposes_visual_diff_and_safe_write_controls() -> None:
     assert "issue.location" in popup
     assert "payload.issues" in background
     assert "Request schema:" in popup
-    assert "Start 5-capture series and capture run 1" in html
+    assert "Start 2-capture comparison" in html
     assert "collection_fingerprint" in popup
     assert "Copy evidence summary" in html
-    assert "Series started. Start and submit a complete Collectr capture to record run 1." in popup
+    assert "Capture comparison: 0/2" in popup
+    assert "Beginning Collectr capture 1 of 2" in popup
     assert popup.index("await recordReliabilityCapture(result)") > popup.index(
         "const result = response.result"
     )

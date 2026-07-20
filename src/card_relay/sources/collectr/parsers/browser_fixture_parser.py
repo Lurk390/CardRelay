@@ -311,7 +311,6 @@ class CollectrBrowserParser:
             entries=list(aggregated.values()),
             completeness=completeness,
             warnings=warnings,
-            capture_issues=capture_issues[:10],
         )
         diagnostics = BrowserExtractionDiagnostics(
             completeness=completeness,
@@ -329,6 +328,7 @@ class CollectrBrowserParser:
             skipped_watchlist_count=skipped_watchlist_count,
             invalid_record_count=effective_invalid_count,
             invalid_record_reasons=invalid_record_reasons,
+            capture_issues=capture_issues[:10],
             skipped_non_card_count=capture.skipped_non_card_count,
             warnings=warnings,
         )

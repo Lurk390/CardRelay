@@ -53,7 +53,7 @@ function displayCaptureIssues(issues) {
 function reliabilitySummary(series) {
   if (!series) return "No reliability series is active.";
   if (!series.captures?.length) {
-    return "Capture series: 0/5\nSeries started. Start and submit a complete Collectr capture to record run 1.";
+    return "Capture comparison: 0/2\nComparison started. Start and submit a complete Collectr capture to record capture 1.";
   }
   const captures = series.captures;
   const first = captures[0];
@@ -321,7 +321,7 @@ startReliabilityButton.addEventListener("click", async () => {
     reliabilitySeries = { version: 1, captures: [] };
     await chrome.storage.local.set({ reliabilitySeries });
     displayReliabilitySeries();
-    statusElement.textContent = "Reliability series started. Beginning Collectr capture 1 of 5…";
+    statusElement.textContent = "Reliability comparison started. Beginning Collectr capture 1 of 2…";
     await startCapture();
   } catch (error) {
     reliabilityStatus.textContent = error.message;

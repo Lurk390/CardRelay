@@ -186,6 +186,9 @@ def test_distinct_browser_records_with_conflicting_conditions_are_lossy() -> Non
     assert fixturemon.condition == "mixed"
     assert result.diagnostics.invalid_record_count == 1
     assert result.diagnostics.invalid_record_reasons.conflicting_condition == 1
+    assert len(result.diagnostics.capture_issues) == 1
+    assert result.diagnostics.capture_issues[0].reason == "conflicting_condition"
+    assert result.diagnostics.capture_issues[0].card_name == "fixturemon"
     assert result.collection.completeness is ExtractionCompleteness.INCOMPLETE
 
 
