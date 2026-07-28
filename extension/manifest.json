@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "CardRelay Bridge",
+  "name": "CardRelay",
   "version": "0.1.0",
-  "description": "Preview Collectr and Dex data in the local CardRelay companion.",
+  "description": "Review and sync your Collectr collection to Dex.",
   "permissions": ["activeTab", "storage"],
   "host_permissions": [
     "https://app.getcollectr.com/*",

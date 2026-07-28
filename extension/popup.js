@@ -10,38 +10,29 @@ const diffSummary = document.querySelector("#diff-summary");
 const diffList = document.querySelector("#diff-list");
 const reviewSummary = document.querySelector("#review-summary");
 const reviewList = document.querySelector("#review-list");
-const writeResearchSection = document.querySelector("#write-research");
-const armWriteResearchButton = document.querySelector("#arm-write-research");
-const submitWriteResearchButton = document.querySelector("#submit-write-research");
-const writeResearchStatus = document.querySelector("#write-research-status");
-const writeResearchResults = document.querySelector("#write-research-results");
 const safeWriteSection = document.querySelector("#safe-write");
-const safeWriteConfirmation = document.querySelector("#safe-write-confirmation");
 const applySafeWriteButton = document.querySelector("#apply-safe-write");
 const safeWriteStatus = document.querySelector("#safe-write-status");
 const removalSection = document.querySelector("#removal-write");
 const removalConfirmation = document.querySelector("#removal-confirmation");
 const applyRemovalButton = document.querySelector("#apply-removal");
 const removalStatus = document.querySelector("#removal-status");
-const reliabilitySection = document.querySelector("#reliability-evidence");
-const startReliabilityButton = document.querySelector("#start-reliability");
-const copyReliabilityButton = document.querySelector("#copy-reliability");
-const reliabilityStatus = document.querySelector("#reliability-status");
-const developerToggle = document.querySelector("#developer-toggle");
-const developerTools = document.querySelector("#developer-tools");
 const captureIssues = document.querySelector("#capture-issues");
+const connectionSettings = document.querySelector("#connection-settings");
+const connectionState = document.querySelector("#connection-state");
+const serviceLabel = document.querySelector("#service-label");
+const actionTitle = document.querySelector("#action-title");
+const syncStats = document.querySelector("#sync-stats");
+const statAdds = document.querySelector("#stat-adds");
+const statUpdates = document.querySelector("#stat-updates");
+const statRemovals = document.querySelector("#stat-removals");
+const statReview = document.querySelector("#stat-review");
+const changeDetails = document.querySelector("#change-details");
+const changeSummary = document.querySelector("#change-summary");
+const reviewSection = document.querySelector("#review-section");
 const captureIssuesList = document.querySelector("#capture-issues-list");
 let latestSafeWritePreview = null;
 let latestRemovalPreview = null;
-let reliabilitySeries = null;
-let developerToolsEnabled = false;
-
-developerToggle.addEventListener("click", async () => {
-  developerToolsEnabled = !developerToolsEnabled;
-  await chrome.storage.local.set({ developerToolsEnabled });
-  developerTools.hidden = !developerToolsEnabled;
-  developerToggle.textContent = developerToolsEnabled ? "Hide developer tools" : "Developer tools";
-});
 
 function displayCaptureIssues(issues) {
   captureIssuesList.replaceChildren();
@@ -49,50 +40,10 @@ function displayCaptureIssues(issues) {
   captureIssues.hidden = visible.length === 0;
   for (const issue of visible) {
     const item = document.createElement("div");
-    item.className = "research-result";
+    item.className = "capture-issue";
     item.textContent = `${issue.reason}: ${issue.card_name} · ${issue.set_name || "Unknown set"}${issue.collector_number ? ` #${issue.collector_number}` : ""}\n${issue.guidance}`;
     captureIssuesList.append(item);
   }
-}
-
-function reliabilitySummary(series) {
-  if (!series) return "No reliability series is active.";
-  if (!series.captures?.length) {
-    return "Capture comparison: 0/2\nComparison started. Start and submit a complete Collectr capture to record capture 1.";
-  }
-  const captures = series.captures;
-  const first = captures[0];
-  const fingerprintsMatch = captures.every(capture => capture.collection_fingerprint === first.collection_fingerprint);
-  const complete = captures.every(capture => capture.completeness === "complete" &&
-    capture.invalid_record_count === 0 && capture.pagination_complete);
-  return [
-    `Capture comparison: ${captures.length}/2`,
-    `Canonical fingerprint: ${fingerprintsMatch ? "identical" : "CHANGED"}`,
-    `Completeness and diagnostics: ${complete ? "pass" : "needs review"}`,
-    `Entries/quantity: ${first.unique_entries}/${first.total_quantity}`,
-    captures.length === 2 && fingerprintsMatch && complete
-      ? "Repeatability evidence passed locally. Run CSV equivalence separately."
-      : "Start another capture from the same unchanged portfolio, then send its preview."
-  ].join("\n");
-}
-
-function displayReliabilitySeries() {
-  reliabilityStatus.textContent = reliabilitySummary(reliabilitySeries);
-  copyReliabilityButton.disabled = !reliabilitySeries?.captures?.length;
-}
-
-async function recordReliabilityCapture(result) {
-  if (!reliabilitySeries || reliabilitySeries.captures.length >= 2) return;
-  reliabilitySeries.captures.push({
-    collection_fingerprint: result.collection_fingerprint,
-    completeness: result.completeness,
-    unique_entries: result.unique_entries,
-    total_quantity: result.total_quantity,
-    pagination_complete: result.pagination_complete,
-    invalid_record_count: result.invalid_record_count
-  });
-  await chrome.storage.local.set({ reliabilitySeries });
-  displayReliabilitySeries();
 }
 
 async function activeSupportedTab() {
@@ -123,144 +74,43 @@ function displayCollectrStatus(status) {
     status.offsetsContiguous &&
     status.exactViewVerified &&
     !status.conflictingPageObserved;
+  sendButton.hidden = !ready || status.captureRunning;
   sendButton.disabled = !ready || status.captureRunning;
-  statusElement.textContent = [
-    `Pages observed: ${status.productPageCount}`,
-    `Terminal page: ${status.terminalPageSeen ? "yes" : "no"}`,
-    `Condition lookups: ${status.conditionLookupCount}`,
-    `Grading lookups: ${status.gradingLookupCount}`,
-    `Visible card total: ${status.visibleTotalQuantity ?? "not observed"}`,
-    status.captureRunning ? "Capture is scrolling…" : "Capture is idle."
-  ].join("\n");
+  startButton.textContent = status.productPageCount > 0 ? "Recapture Collectr" : "Capture Collectr";
+  if (status.captureRunning) {
+    statusElement.textContent = "Capturing Collectr… Keep this tab open until it finishes.";
+  } else if (ready) {
+    statusElement.textContent = "Collectr is ready. Save this capture to continue.";
+  } else if (status.productPageCount > 0) {
+    statusElement.textContent = "The capture is incomplete. Run it again before syncing.";
+  } else {
+    statusElement.textContent = "Capture your current Collectr portfolio to begin.";
+  }
 }
-
 function displayDexStatus(status) {
-  sendButton.disabled = !status.collectionComplete || !status.catalogComplete;
-  submitWriteResearchButton.disabled = !status.writeObservationCount;
-  const collectionCount = status.collectionTotalPages
-    ? `${status.collectionPageCount}/${status.collectionTotalPages}`
-    : String(status.collectionPageCount);
-  const catalogCount = status.catalogTotalPages
-    ? `${status.catalogPageCount}/${status.catalogTotalPages}`
-    : String(status.catalogPageCount);
-  statusElement.textContent = [
-    `Active Dex capture: ${status.activeTarget || "none"}`,
-    `Collection pages: ${collectionCount} (${status.collectionComplete ? "complete" : "incomplete"})`,
-    `Catalog pages: ${catalogCount} (${status.catalogComplete ? "complete" : "incomplete"})`,
-    `Write observations: ${status.writeObservationCount || 0}${status.writeResearchArmed ? " (armed)" : ""}`,
-    status.collectionConflict || status.catalogConflict
-      ? "Conflicting repeated page detected; restart that capture."
-      : "Catalog pages load gradually; manual browsing remains available."
-  ].join("\n");
+  const ready = status.collectionComplete && status.catalogComplete;
+  sendButton.hidden = !ready;
+  sendButton.disabled = !ready;
+  startButton.textContent = status.collectionComplete ? "Recapture collection" : "Capture collection";
+  catalogButton.textContent = status.catalogComplete ? "Recapture catalog" : "Capture catalog";
+  if (ready) {
+    statusElement.textContent = "Dex is ready. Save this capture to review your sync.";
+  } else if (status.captureRunning || status.activeTarget) {
+    statusElement.textContent = "Capturing Dex… Keep this tab open until it finishes.";
+  } else if (status.collectionComplete) {
+    statusElement.textContent = "Collection captured. Open Dex Search, then capture the catalog.";
+  } else {
+    statusElement.textContent = "Start with your Dex collection, then capture the catalog from Search.";
+  }
 }
-
 function configureForService(service) {
   const isDex = service === "dex";
-  startButton.textContent = isDex ? "Start Dex collection capture" : "Start portfolio capture";
+  serviceLabel.textContent = isDex ? "Dex" : "Collectr";
+  actionTitle.textContent = isDex ? "Capture destination" : "Capture source";
+  startButton.textContent = isDex ? "Capture collection" : "Capture Collectr";
   catalogButton.hidden = !isDex;
-  writeResearchSection.hidden = !isDex;
-  sendButton.textContent = isDex ? "Send Dex read-only preview" : "Send preview to CardRelay";
-  reliabilitySection.hidden = isDex;
+  sendButton.textContent = isDex ? "Save Dex capture" : "Save Collectr capture";
 }
-
-copyReliabilityButton.addEventListener("click", async () => {
-  if (!reliabilitySeries?.captures?.length) return;
-  const report = {
-    report: "CardRelay Milestone 6 browser repeatability evidence",
-    captures: reliabilitySeries.captures,
-    result: reliabilitySummary(reliabilitySeries)
-  };
-  try {
-    await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
-    reliabilityStatus.textContent = `${reliabilitySummary(reliabilitySeries)}\nEvidence summary copied.`;
-  } catch {
-    reliabilityStatus.textContent = "Unable to copy the evidence summary. Keep the popup open and retry.";
-  }
-});
-
-armWriteResearchButton.addEventListener("click", async () => {
-  try {
-    const { tab, service } = await activeSupportedTab();
-    if (service !== "dex") throw new Error("Open Dex before arming write research.");
-    const response = await sendToContentScript(tab, service, {
-      type: "card-relay-dex-start",
-      target: "write-research"
-    });
-    if (!response?.ok) throw new Error("Unable to arm Dex write research.");
-    writeResearchResults.replaceChildren();
-    writeResearchStatus.textContent = [
-      "Schema-only observation is armed.",
-      "Manually make one small, reversible collection change in Dex, then reopen CardRelay."
-    ].join(" ");
-    displayDexStatus(response.status);
-  } catch (error) {
-    writeResearchStatus.textContent = error.message;
-  }
-});
-
-function topLevelFields(shape) {
-  return shape?.kind === "object" ? Object.keys(shape.fields || {}).sort().join(", ") : shape?.kind;
-}
-
-function shapePaths(shape, prefix = "", paths = []) {
-  if (!shape || paths.length >= 50) return paths;
-  if (shape.kind === "object") {
-    for (const [field, child] of Object.entries(shape.fields || {}).sort()) {
-      shapePaths(child, prefix ? `${prefix}.${field}` : field, paths);
-    }
-    return paths;
-  }
-  if (shape.kind === "array") {
-    for (const child of shape.items || []) shapePaths(child, `${prefix}[]`, paths);
-    return paths;
-  }
-  paths.push(`${prefix || "body"}:${shape.kind}${shape.format ? `(${shape.format})` : ""}`);
-  return paths;
-}
-
-submitWriteResearchButton.addEventListener("click", async () => {
-  submitWriteResearchButton.disabled = true;
-  writeResearchStatus.textContent = "Validating the schema-only observation…";
-  try {
-    const { tab, service } = await activeSupportedTab();
-    if (service !== "dex") throw new Error("Open Dex before submitting write research.");
-    const response = await sendToContentScript(tab, service, {
-      type: "card-relay-dex-write-research-submit"
-    });
-    if (!response?.ok) {
-      const issues = (response?.issues || [])
-        .map(issue => `${issue.location || "capture"}: ${issue.type || "invalid"}`)
-        .join(", ");
-      throw new Error(
-        `Observation rejected: ${response?.error || "unknown error"}${issues ? ` (${issues})` : ""}`
-      );
-    }
-    const result = response.result;
-    writeResearchStatus.textContent = [
-      `${result.observation_count} schema-only observation${result.observation_count === 1 ? "" : "s"} validated.`,
-      result.warning
-    ].join(" ");
-    writeResearchResults.replaceChildren();
-    for (const observation of result.observations || []) {
-      const item = document.createElement("div");
-      item.className = "research-result";
-      item.textContent = [
-        `${observation.method} ${observation.route_template} → ${observation.response_status}`,
-        `Origin host: ${observation.origin_host}`,
-        `Query keys: ${(observation.query_keys || []).join(", ") || "none"}`,
-        `Path bindings: ${(observation.path_parameter_bindings || [])
-          .map(binding => `${binding.segment_index}=${binding.source}`).join(", ") || "none"}`,
-        `Request fields: ${topLevelFields(observation.request_shape) || "none"}`,
-        `Request schema: ${shapePaths(observation.request_shape).join(", ") || "empty"}`,
-        `Response shape: ${topLevelFields(observation.response_shape) || "empty"}`
-      ].join("\n");
-      writeResearchResults.append(item);
-    }
-  } catch (error) {
-    writeResearchStatus.textContent = error.message;
-  }
-});
-
 async function refreshStatus() {
   try {
     const { tab, service } = await activeSupportedTab();
@@ -284,10 +134,12 @@ document.querySelector("#save").addEventListener("click", async () => {
     return;
   }
   await chrome.storage.local.set({ companionPort: port, pairingToken });
-  statusElement.textContent = "Pairing saved locally in this extension profile.";
+  connectionState.textContent = "Saved";
+  connectionSettings.open = false;
+  statusElement.textContent = "Connection saved. Open Collectr or Dex to continue.";
 });
 
-async function startCapture(reliabilityRuns = 0) {
+async function startCapture() {
   const { tab, service } = await activeSupportedTab();
   if (service === "dex") {
     const response = await sendToContentScript(tab, service, {
@@ -299,8 +151,7 @@ async function startCapture(reliabilityRuns = 0) {
     return;
   }
   const response = await sendToContentScript(tab, service, {
-    type: "card-relay-start",
-    reliabilityRuns
+    type: "card-relay-start"
   });
   if (!response?.ok) throw new Error("Unable to start capture. Reload Collectr and retry.");
   if (response.navigateToProducts) {
@@ -313,23 +164,9 @@ async function startCapture(reliabilityRuns = 0) {
 
 startButton.addEventListener("click", async () => {
   try {
-    await startCapture(0);
-  } catch (error) {
-    statusElement.textContent = error.message;
-  }
-});
-
-startReliabilityButton.addEventListener("click", async () => {
-  try {
-    const { service } = await activeSupportedTab();
-    if (service !== "collectr") throw new Error("Open the Collectr portfolio before starting a series.");
-    reliabilitySeries = { version: 1, captures: [] };
-    await chrome.storage.local.set({ reliabilitySeries });
-    displayReliabilitySeries();
-    statusElement.textContent = "Reliability comparison started. Beginning Collectr capture 1 of 2…";
     await startCapture();
   } catch (error) {
-    reliabilityStatus.textContent = error.message;
+    statusElement.textContent = error.message;
   }
 });
 
@@ -352,25 +189,40 @@ document.querySelector("#refresh").addEventListener("click", refreshStatus);
 
 function displaySyncPreview(result) {
   const counts = result.change_counts || {};
+  const adds = counts.add_card || 0;
+  const updates = (counts.increase_quantity || 0) + (counts.decrease_quantity || 0);
+  const removals = counts.remove_card || 0;
+  const reviews = (counts.manual_review_required || 0) +
+    (counts.unsupported_operation || 0) + (counts.blocked_by_safety_policy || 0);
   const visibleChanges = (result.changes || []).filter(change => change.change !== "no_change");
-  diffSummary.textContent = [
-    `Adds: ${counts.add_card || 0} · Increases: ${counts.increase_quantity || 0}`,
-    `Decreases: ${counts.decrease_quantity || 0} · Removals: ${counts.remove_card || 0}`,
-    `Review/blocked: ${(counts.manual_review_required || 0) + (counts.unsupported_operation || 0)}`,
-    result.truncated || visibleChanges.length > 250
-      ? "The displayed diff list is truncated."
-      : "All changes are displayed.",
-    result.destination_writes_enabled
-      ? "Safe Dex writes are ready for explicit confirmation below."
-      : "Safe Dex writes are unavailable for this preview.",
-    result.removal_writes_enabled
-      ? "A controlled managed-card removal is ready for separate destructive confirmation."
-      : (result.removal_test_enabled
-        ? "Controlled removal test mode is enabled, but no eligible removal is ready."
-        : "Dex removals are disabled.")
-  ].join("\n");
+  const totalChanges = Object.entries(counts)
+    .filter(([kind]) => kind !== "no_change")
+    .reduce((total, [, count]) => total + count, 0);
+
+  syncStats.hidden = false;
+  statAdds.textContent = String(adds);
+  statUpdates.textContent = String(updates);
+  statRemovals.textContent = String(removals);
+  statReview.textContent = String(reviews);
+  changeDetails.hidden = totalChanges === 0;
+  changeDetails.open = Boolean(result.removal_writes_enabled);
+  changeSummary.textContent = `View ${totalChanges} card change${totalChanges === 1 ? "" : "s"}`;
+
+  if (totalChanges === 0) {
+    diffSummary.textContent = "Collectr and Dex are in sync.";
+  } else if (result.mapping_review_count) {
+    diffSummary.textContent = `${totalChanges} changes found. Resolve ${result.mapping_review_count} match${result.mapping_review_count === 1 ? "" : "es"} below.`;
+  } else if (result.destination_writes_enabled || result.removal_writes_enabled) {
+    diffSummary.textContent = `${totalChanges} changes found. Review them, then sync when ready.`;
+  } else if (result.safe_write_block_reason === "dex_recapture_required_after_write_attempt" ||
+      result.removal_block_reason === "dex_recapture_required_after_write_attempt") {
+    diffSummary.textContent = "Capture Dex again to verify the last sync.";
+  } else {
+    diffSummary.textContent = `${totalChanges} changes found, but none are ready to apply.`;
+  }
+
   diffList.replaceChildren();
-  for (const change of visibleChanges.slice(0, 250)) {
+  for (const change of visibleChanges.slice(0, 60)) {
     const item = document.createElement("div");
     const destructive = ["decrease_quantity", "remove_card"].includes(change.change);
     const safe = ["add_card", "increase_quantity"].includes(change.change);
@@ -380,22 +232,28 @@ function displaySyncPreview(result) {
     title.textContent = `${change.card} · ${change.set || change.set_code || "Unknown set"} #${change.collector_number}`;
     const detail = document.createElement("div");
     detail.className = "diff-detail";
-    detail.textContent = `${change.change.replaceAll("_", " ")}: Dex ${change.current_quantity} → Collectr ${change.collectr_quantity}`;
+    detail.textContent = `Dex ${change.current_quantity} → Collectr ${change.collectr_quantity}`;
     item.append(title, detail);
     diffList.append(item);
   }
+  if (visibleChanges.length > 60) {
+    const item = document.createElement("div");
+    item.className = "diff-item";
+    item.textContent = `${visibleChanges.length - 60} more changes are included in the summary.`;
+    diffList.append(item);
+  }
+
   latestSafeWritePreview = result.destination_writes_enabled ? {
     confirmationCode: result.safe_write_confirmation_code,
     operationIds: result.safe_write_operation_ids || []
   } : null;
   safeWriteSection.hidden = !latestSafeWritePreview;
-  safeWriteConfirmation.value = "";
-  applySafeWriteButton.disabled = true;
-  safeWriteStatus.textContent = latestSafeWritePreview
-    ? `${result.safe_write_count} safe change${result.safe_write_count === 1 ? "" : "s"} ready. Type ${result.safe_write_confirmation_code} to enable the button.`
-    : (result.safe_write_block_reason === "dex_recapture_required_after_write_attempt"
-      ? "A Dex write was attempted from this snapshot. Capture Dex again before another attempt."
-      : "No safe Dex writes are available from this preview.");
+  applySafeWriteButton.disabled = !latestSafeWritePreview;
+  if (latestSafeWritePreview) {
+    applySafeWriteButton.textContent = `Sync ${result.safe_write_count} change${result.safe_write_count === 1 ? "" : "s"}`;
+    safeWriteStatus.textContent = `${result.safe_write_count} non-destructive change${result.safe_write_count === 1 ? " is" : "s are"} ready.`;
+  }
+
   latestRemovalPreview = result.removal_writes_enabled ? {
     confirmationCode: result.destructive_confirmation_code,
     operationIds: result.removal_operation_ids || []
@@ -403,24 +261,20 @@ function displaySyncPreview(result) {
   removalSection.hidden = !latestRemovalPreview;
   removalConfirmation.value = "";
   applyRemovalButton.disabled = true;
-  removalStatus.textContent = latestRemovalPreview
-    ? `${result.removal_count} managed removal${result.removal_count === 1 ? "" : "s"} ready. Type ${result.destructive_confirmation_code} to enable the destructive test.`
-    : (result.removal_block_reason === "dex_recapture_required_after_write_attempt"
-      ? "A Dex write was attempted from this snapshot. Capture Dex again before another attempt."
-      : "No controlled Dex removal is available from this preview.");
+  if (latestRemovalPreview) {
+    removalStatus.textContent = `${result.removal_count} managed removal${result.removal_count === 1 ? "" : "s"}. Approval code: ${result.destructive_confirmation_code}`;
+  }
   displayMappingReviews(result);
 }
-
-safeWriteConfirmation.addEventListener("input", () => {
-  const typed = safeWriteConfirmation.value.trim().toUpperCase();
-  applySafeWriteButton.disabled = !latestSafeWritePreview || typed !== latestSafeWritePreview.confirmationCode;
-});
-
 applySafeWriteButton.addEventListener("click", async () => {
   if (!latestSafeWritePreview) return;
   applySafeWriteButton.disabled = true;
-  safeWriteStatus.textContent = "Preparing the confirmed Dex batch…";
+  safeWriteStatus.textContent = "Preparing sync…";
+  latestRemovalPreview = null;
+  removalSection.hidden = true;
   try {
+    const { tab, service } = await activeSupportedTab();
+    if (service !== "dex") throw new Error("Open Dex to sync these changes.");
     const prepared = await chrome.runtime.sendMessage({
       type: "card-relay-safe-write-prepare",
       payload: {
@@ -429,9 +283,7 @@ applySafeWriteButton.addEventListener("click", async () => {
       }
     });
     if (!prepared?.ok) throw new Error(prepared?.error || "safe_write_prepare_failed");
-    const { tab, service } = await activeSupportedTab();
-    if (service !== "dex") throw new Error("Open Dex before applying the confirmed batch.");
-    safeWriteStatus.textContent = "Applying the confirmed Dex batch…";
+    safeWriteStatus.textContent = "Syncing with Dex…";
     const execution = await sendToContentScript(tab, service, {
       type: "card-relay-dex-safe-write-execute",
       batch: prepared.result
@@ -450,10 +302,10 @@ applySafeWriteButton.addEventListener("click", async () => {
     const summary = reported.result;
     latestSafeWritePreview = null;
     safeWriteSection.hidden = true;
-    safeWriteStatus.textContent = `${summary.succeeded} succeeded, ${summary.failed} failed. Capture Dex again before any further sync.`;
-    diffSummary.textContent = "Dex write attempt recorded. Capture Dex again before building the next diff.";
+    safeWriteStatus.textContent = `${summary.succeeded} synced, ${summary.failed} failed. Capture Dex again to verify.`;
+    diffSummary.textContent = "Sync sent. Capture Dex again to verify the result.";
   } catch (error) {
-    safeWriteStatus.textContent = `Write attempt was not completed: ${error.message}. Capture Dex again before retrying.`;
+    safeWriteStatus.textContent = `Sync stopped: ${error.message}. Capture Dex again before retrying.`;
   }
 });
 
@@ -466,8 +318,12 @@ removalConfirmation.addEventListener("input", () => {
 applyRemovalButton.addEventListener("click", async () => {
   if (!latestRemovalPreview) return;
   applyRemovalButton.disabled = true;
-  removalStatus.textContent = "Creating a recovery backup and preparing the removal test…";
+  removalStatus.textContent = "Creating a recovery backup…";
+  latestSafeWritePreview = null;
+  safeWriteSection.hidden = true;
   try {
+    const { tab, service } = await activeSupportedTab();
+    if (service !== "dex") throw new Error("Open Dex before removing approved cards.");
     const prepared = await chrome.runtime.sendMessage({
       type: "card-relay-removal-prepare",
       payload: {
@@ -476,9 +332,7 @@ applyRemovalButton.addEventListener("click", async () => {
       }
     });
     if (!prepared?.ok) throw new Error(prepared?.error || "removal_prepare_failed");
-    const { tab, service } = await activeSupportedTab();
-    if (service !== "dex") throw new Error("Open Dex before applying the confirmed removal.");
-    removalStatus.textContent = "Applying the confirmed managed-card removal…";
+    removalStatus.textContent = "Removing approved cards from Dex…";
     const execution = await sendToContentScript(tab, service, {
       type: "card-relay-dex-safe-write-execute",
       batch: prepared.result
@@ -550,16 +404,17 @@ function displayMappingReviews(result) {
   const reviews = result.mapping_reviews || [];
   const total = result.mapping_review_count || 0;
   reviewList.replaceChildren();
+  reviewSection.hidden = total === 0;
   if (!total) {
     reviewSummary.textContent = "No probable or ambiguous matches are waiting for review.";
     return;
   }
-  const visibleReviews = reviews.slice(0, 50);
+  const visibleReviews = reviews.slice(0, 20);
   reviewSummary.textContent = [
     `${total} match${total === 1 ? "" : "es"} waiting for review.`,
     total > visibleReviews.length || result.mapping_reviews_truncated
       ? `Showing the first ${visibleReviews.length}; decisions refresh the queue.`
-      : "Every pending match is shown."
+      : "Review each suggested match before syncing."
   ].join(" ");
   for (const review of visibleReviews) {
     const item = document.createElement("div");
@@ -619,75 +474,61 @@ function displayMappingReviews(result) {
   }
 }
 
-document.querySelector("#build-diff").addEventListener("click", async () => {
-  diffSummary.textContent = "Building the Collectr → Dex diff…";
-  diffList.replaceChildren();
+async function loadSyncPreview(showErrors = false) {
   try {
     const response = await chrome.runtime.sendMessage({ type: "card-relay-sync-preview" });
     if (!response?.ok) {
-      diffSummary.textContent = `Diff unavailable: ${response?.error || "unknown error"}`;
-      return;
+      if (showErrors) diffSummary.textContent = "Capture both Collectr and Dex before reviewing your sync.";
+      return false;
     }
     displaySyncPreview(response.result);
+    return true;
   } catch {
-    diffSummary.textContent = "Diff unavailable: companion unavailable";
+    if (showErrors) diffSummary.textContent = "CardRelay companion is unavailable.";
+    return false;
   }
-});
+}
 
+document.querySelector("#build-diff").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = "Reviewing…";
+  diffSummary.textContent = "Comparing Collectr and Dex…";
+  diffList.replaceChildren();
+  await loadSyncPreview(true);
+  button.disabled = false;
+  button.textContent = "Review";
+});
 sendButton.addEventListener("click", async () => {
   sendButton.disabled = true;
-  statusElement.textContent = "Validating preview in CardRelay…";
+  statusElement.textContent = "Saving capture…";
   try {
     const { tab, service } = await activeSupportedTab();
     const type = service === "dex" ? "card-relay-dex-submit" : "card-relay-submit";
     const response = await sendToContentScript(tab, service, { type });
-    if (!response?.ok) throw new Error(`Preview rejected: ${response?.error || "unknown error"}`);
+    if (!response?.ok) throw new Error("Capture could not be saved. Run it again.");
     const result = response.result;
     if (service === "dex") {
-      statusElement.textContent = [
-        `Dex catalog records: ${result.catalog_records}`,
-        `Dex collection records: ${result.collection_records}`,
-        `Dex quantity: ${result.total_quantity}`,
-        `Pagination complete: ${result.pagination_complete ? "yes" : "no"}`,
-        `Normalization complete: ${result.normalization_complete ? "yes" : "no"}`,
-        `Unsupported labels: ${(result.unsupported_catalog_variants?.length || 0) +
-          (result.unsupported_collection_quantities?.length || 0)}`,
-        result.normalization_complete
-          ? "Read-only snapshot stored. Build and confirm a diff before any write."
-          : "Incomplete read-only snapshot stored; review diagnostics before comparison."
-      ].join("\n");
-      return;
+      statusElement.textContent = result.normalization_complete
+        ? "Dex saved. Your sync review is ready below."
+        : "Dex saved, but some card finishes need attention before syncing.";
+    } else {
+      displayCaptureIssues(result.capture_issues);
+      statusElement.textContent = result.completeness === "complete"
+        ? `Collectr saved · ${result.unique_entries} cards`
+        : "Collectr saved, but the capture is incomplete. Run it again before removals.";
     }
-    await recordReliabilityCapture(result);
-    displayCaptureIssues(result.capture_issues);
-    const invalidReasons = Object.entries(result.invalid_record_reasons || {})
-      .filter(([, count]) => count > 0)
-      .map(([reason, count]) => `  ${reason.replaceAll("_", " ")}: ${count}`);
-    statusElement.textContent = [
-      `Snapshot stored: ${result.snapshot_id}`,
-      `Entries: ${result.unique_entries}`,
-      `Quantity: ${result.total_quantity}`,
-      `Completeness: ${result.completeness}`,
-      `Invalid/lossy rows: ${result.invalid_record_count}`,
-      ...invalidReasons,
-      `Skipped non-cards: ${result.skipped_non_card_count}`,
-      "Snapshot stored. Build and confirm a diff before any write."
-    ].join("\n");
+    await loadSyncPreview(false);
   } catch (error) {
     statusElement.textContent = error.message;
+    sendButton.disabled = false;
   }
 });
-
-chrome.storage.local.get(["companionPort", "pairingToken", "developerToolsEnabled"]).then(settings => {
+chrome.storage.local.get(["companionPort", "pairingToken"]).then(settings => {
   portInput.value = settings.companionPort || 8765;
   tokenInput.value = settings.pairingToken || "";
-  developerToolsEnabled = settings.developerToolsEnabled === true;
-  developerTools.hidden = !developerToolsEnabled;
-  developerToggle.textContent = developerToolsEnabled ? "Hide developer tools" : "Developer tools";
-});
-chrome.storage.local.get(["reliabilitySeries"]).then(settings => {
-  const series = settings.reliabilitySeries;
-  if (series?.version === 1 && Array.isArray(series.captures)) reliabilitySeries = series;
-  displayReliabilitySeries();
+  const connected = Boolean(settings.pairingToken);
+  connectionState.textContent = connected ? "Saved" : "Set up";
+  connectionSettings.open = !connected;
 });
 void refreshStatus();

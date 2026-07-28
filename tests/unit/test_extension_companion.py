@@ -615,44 +615,51 @@ def test_sync_preview_reports_which_local_capture_is_missing(tmp_path: Path) -> 
         process_sync_preview(database_path)
 
 
-def test_extension_exposes_visual_diff_and_safe_write_controls() -> None:
+def test_extension_exposes_polished_guided_sync_controls() -> None:
     popup = (EXTENSION / "popup.js").read_text(encoding="utf-8")
     background = (EXTENSION / "background.js").read_text(encoding="utf-8")
     html = (EXTENSION / "popup.html").read_text(encoding="utf-8")
 
-    assert "Build visual diff" in html
+    assert "Keep Collectr and Dex in sync." in html
+    assert "Save connection" in html
+    assert "Capture destination" in popup
+    assert "Capture source" in popup
+    assert "Collectr → Dex" in html
     assert "card-relay-sync-preview" in popup
     assert "/v1/sync/previews" in background
+    assert "await loadSyncPreview(false)" in popup
+    assert "View ${totalChanges} card change" in popup
     assert "Match review" in html
     assert "Confirm match" in popup
     assert "Reject candidate" in popup
     assert "card-relay-mapping-decision" in popup
     assert "/v1/mappings/decisions" in background
-    assert "Arm schema-only observation" in html
-    assert "card-relay-dex-write-research-submit" in popup
-    assert "/v1/dex/write-observations" in background
-    assert "Reload the ${page} tab once, then reopen CardRelay." in popup
-    assert "issue.location" in popup
-    assert "payload.issues" in background
-    assert "Request schema:" in popup
-    assert "Start 2-capture comparison" in html
-    assert "collection_fingerprint" in popup
-    assert "Copy evidence summary" in html
-    assert "Capture comparison: 0/2" in popup
-    assert "Beginning Collectr capture 1 of 2" in popup
-    assert popup.index("await recordReliabilityCapture(result)") > popup.index(
-        "const result = response.result"
-    )
-    assert popup.rindex("await startCapture()") > popup.index("reliabilitySeries = { version: 1")
-    assert "Apply safe Dex changes" in html
+    assert "Ready to sync" in html
     assert "card-relay-safe-write-prepare" in popup
     assert "card-relay-dex-safe-write-execute" in popup
     assert "/v1/dex/safe-write-batches" in background
-    assert "Controlled Dex removal test" in html
+    assert "safe-write-confirmation" not in html
+    assert "safeWriteConfirmation" not in popup
+    assert "Approve removals" in html
+    assert "removal-confirmation" in html
     assert "card-relay-removal-prepare" in popup
     assert "dex-removal-report-v1" in popup
     assert "/v1/dex/removal-batches" in background
     assert "/v1/dex/removal-reports" in background
+    assert "Developer tools" not in html
+    assert "Milestone 6 reliability evidence" not in html
+    assert "Dex write-contract research" not in html
+    assert "Pages observed:" not in popup
+    assert "Dex catalog records:" not in popup
+    assert "Reload the ${page} tab once, then reopen CardRelay." in popup
+    safe_handler = popup[popup.index("applySafeWriteButton.addEventListener") :]
+    assert safe_handler.index('if (service !== "dex")') < safe_handler.index(
+        'type: "card-relay-safe-write-prepare"'
+    )
+    removal_handler = popup[popup.index("applyRemovalButton.addEventListener") :]
+    assert removal_handler.index('if (service !== "dex")') < removal_handler.index(
+        'type: "card-relay-removal-prepare"'
+    )
 
 
 def test_companion_accepts_dex_capture_in_bounded_contiguous_chunks(tmp_path: Path) -> None:

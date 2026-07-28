@@ -73,60 +73,46 @@ After changing extension source files, select **Reload** on the extension card a
 
 The token is stored only in this local Chrome extension profile. Restarting the companion invalidates it and requires saving the newly printed token.
 
-### 4. Capture and preview Collectr
+### 4. Capture Collectr
 
-1. Sign in to Collectr normally and open `https://app.getcollectr.com/portfolio`.
-2. Open the CardRelay popup and select **Start portfolio capture**.
-3. CardRelay records the visible Cards total, opens the Products view, and scrolls while Collectr loads its portfolio batches.
-4. Reopen the popup and select **Refresh status**. Wait for **Capture is idle**. A complete observation should show contiguous pages and a terminal page.
-5. Select **Send preview to CardRelay**.
+1. Sign in to Collectr normally and open your portfolio.
+2. Open CardRelay and select **Capture Collectr**. CardRelay opens the Products view and scrolls while Collectr loads the collection.
+3. Reopen CardRelay when capture finishes. Select **Save Collectr capture** when it appears.
 
-The companion validates the untrusted browser payload with the same Python contract and canonical parser used by the CLI. The popup then reports the snapshot ID, unique-entry count, total quantity, and completeness. Raw response bodies are discarded after validation; SQLite stores the normalized collection and snapshot metadata locally so it can build later diffs, never the extension's raw portfolio responses.
+The popup shows a short success or attention message instead of pagination internals. The companion still validates the complete untrusted browser payload, discards raw response bodies, and stores only the normalized collection and snapshot metadata locally. An incomplete capture can support observed additions, but never removals.
 
-### Reliability evidence for controlled destructive sync
+### 5. Capture Dex and sync
 
-To validate browser repeatability, open a Collectr portfolio in the extension and select **Start 2-capture comparison**. Submit the first complete capture, then start and submit a second capture without changing the portfolio. CardRelay compares the canonical fingerprints and reports whether both captures are complete with zero invalid records. **Copy evidence summary** exports only fingerprints, counts, and pass/fail diagnostics—not card details or browser credentials. Repeat this for each required user-controlled portfolio. This helper does not authorize destructive writes; follow [the reliability gates](docs/browser-source-reliability.md) for the required CSV-equivalence, Dex decrease/removal contract, and operational-review evidence.
+1. Open Dex **Dashboard → Collection**, open CardRelay, and select **Capture collection**.
+2. Open Dex **Search**, then select **Capture catalog**.
+3. When both are ready, select **Save Dex capture**. CardRelay automatically refreshes the sync review.
+4. Use the four summary counts to review additions, updates, removals, and records needing attention. Card details stay collapsed unless you open **View card changes**.
+5. Resolve **Match review** only when CardRelay cannot safely identify a printing. Confirm only when the card, set, collector number, and finish agree.
+6. For additions and increases, select the single **Sync changes** button. No typed code is required for these non-destructive writes.
+7. Capture Dex again after every write attempt to verify the result and unlock the next sync.
 
-`complete` means the observed schema, 30-record pagination, empty terminal page, condition/grading metadata, and visible quantity total reconciled. Metadata may come from observed read responses or Collectr's two verified expiring cache entries; CardRelay never enumerates other browser storage. `incomplete` is still useful for observed additions and increases, but omitted cards remain unknown and cannot authorize decreases or removals.
+CardRelay uses the verified `clients.dextcg.com` routes, preserves every existing Dex quantity key on updates, retries only idempotent PATCH requests, and records each attempt locally. The catalog remains in tab memory; collection capture uses Chrome session storage only across the Collection-to-Search navigation.
 
-### Troubleshooting the extension
+### Controlled live removal test
 
-- **CardRelay content script is unavailable:** reload the Collectr tab after installing or reloading the extension.
-- **Pairing required:** start the companion, copy its current token and port, then save pairing again.
-- **Companion unavailable:** confirm the terminal is still running and that the popup port matches it. Only loopback connections are accepted.
-- **Capture not ready:** return to the portfolio overview and start a fresh capture. Aggregate views, conflicting pages, or offset gaps are rejected.
-- **Invalid capture JSON/contract/source:** the companion reports which validation stage rejected the preview without echoing private card data. Reload the extension and Collectr tab after an extension update; otherwise preserve the status counts and report the stage.
-- **Terminal page says no:** wait for capture to become idle and retry. The preview remains incomplete if Collectr never returns its empty terminal batch.
-- **Preview is incomplete with entries:** CardRelay retained safe ungraded records but could not resolve every condition or graded-card lookup. Omitted or lossy rows are reported and destructive planning stays blocked.
-- **Google rejects Playwright login:** use the extension in normal Chrome. CardRelay does not weaken browser security or disguise automation to bypass that rejection.
-
-### Capture a read-only Dex snapshot
-
-1. Keep `card-relay extension serve` running and use the same saved pairing.
-2. Sign in to Dex normally, open **Dashboard → Collection**, open CardRelay, and select **Start Dex collection capture**. Refresh status until collection capture is complete and the active target returns to `none`.
-3. Open Dex **Search**, open CardRelay, and select **Start Dex catalog capture**.
-4. Keep that Search tab open. CardRelay replays the already-observed paginated read request at a bounded rate; no scrolling is required. Refresh status until every catalog page is present.
-5. Select **Send Dex read-only preview**. The extension sends bounded chunks to the loopback companion, which validates pagination, normalizes supported finish labels, caches the catalog, and stores the destination snapshot.
-6. After a Collectr capture and Dex capture are stored, select **Build visual diff** to review additions, increases, decreases, removals, and records blocked for mapping review.
-7. In **Match review**, compare the complete Collectr and Dex printing identities. Select a candidate and choose **Confirm match** only when they represent the same printing, or choose **Reject candidate** to exclude it. Each decision is revalidated against the latest captures, persisted in local SQLite, and immediately rebuilds the diff.
-
-The match queue displays 50 records at a time and refreshes after every decision; summary counts cover the complete queue. Confirmations and rejections survive browser and companion restarts, but stale decisions and destination IDs not offered by the current matcher are rejected. The catalog remains only in the active Dex tab until submission; collection pages use Chrome session storage only so they survive the Collection-to-Search navigation. Missing or unknown finish labels are reported and mark normalization incomplete.
-
-When the preview offers **Apply safe Dex changes**, verify the highlighted diff, type its displayed 12-character confirmation code, and apply the batch from an open Dex tab. CardRelay can only create cards or raise quantities. It uses the verified `clients.dextcg.com` collection routes, preserves every existing Dex quantity key on updates, retries only idempotent `PATCH` requests, and records each attempt locally. After any attempt—including a partial or uncertain failure—capture Dex again before preparing another batch. This prevents a stale preview from replaying an addition.
-
-### Controlled live addition/removal test
-
-Use a disposable card and first sync it through CardRelay so its Dex printing/finish becomes managed. Recapture Dex and verify the addition. Then remove that same printing/finish from Collectr, create a new complete Collectr capture, and start the companion in controlled removal mode:
+Use a disposable card and first sync it through CardRelay so its Dex printing/finish becomes managed. Recapture Dex and verify the addition. Then remove that same printing/finish from Collectr, complete a fresh Collectr capture, and start the companion with:
 
 ```powershell
 uv run card-relay extension serve --enable-removal-test --maximum-removal-count 1 --maximum-removal-percent 100
 ```
 
-Build the diff again. The red removal must identify only the disposable managed printing. Type the separate destructive confirmation code under **Controlled Dex removal test**, keep Dex open, and select **Remove managed card from Dex**. Before execution, CardRelay stores the complete normalized Dex collection as a local recovery backup. The test sends the verified absolute `PATCH /api/user/cards/{collectionRecordId}` contract with only that managed finish set to zero and preserves every other raw quantity key. Capture Dex again immediately to verify the result; CardRelay blocks another write attempt against the old snapshot.
+Save the new captures and review the red removal. CardRelay automatically expands the card list when an executable removal exists. Type the displayed code under **Approve removals**, keep Dex open, and select **Remove approved cards**. CardRelay stores a recovery backup, preserves unrelated quantity keys, and sets only the managed finish to zero. Capture Dex again immediately to verify the live result.
 
-This mode does not enable decreases, unmanaged deletions, batches above the configured thresholds, incomplete Collectr/Dex captures, or general source-authoritative destructive sync. A zero quantity is the live behavior under test, so use a card you are willing to restore manually until recapture confirms Dex accepted it.
+This mode does not enable quantity decreases, unmanaged deletions, incomplete captures, stale retries, or removals beyond the configured thresholds.
 
-The popup also includes an explicitly armed **Dex write-contract research** mode for development. After arming it, the user manually makes one small, reversible Dex collection change and then validates the observation. CardRelay captures only the HTTP method, a route template with dynamic segments removed, query-key names, bounded JSON type/property shapes, and response status. Scalar values, full URLs, headers, cookies, tokens, identifiers, and card data are discarded in the page; the request is never replayed and destination writes remain disabled.
+### Troubleshooting the extension
+
+- **CardRelay is not active:** reload the extension first, then reload the Collectr or Dex tab.
+- **Connection says Set up:** start the companion, open **Connection**, paste its current token, and save.
+- **Capture remains incomplete:** return to the portfolio or Dex collection and run that capture again. CardRelay deliberately does not expose or override failed safety checks.
+- **Sync asks for another Dex capture:** recapture Dex to verify the previous attempt before continuing.
+- **A match needs review:** compare the complete printing identity. Reject it if any meaningful identity field differs.
+- **Google rejects Playwright login:** use the extension in normal Chrome; CardRelay does not weaken browser security.
 
 See the focused [extension guide](extension/README.md), [security and architecture details](docs/browser-extension.md), and [Collectr web contract](docs/collectr-browser-research.md).
 

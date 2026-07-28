@@ -8,74 +8,85 @@
   </head>
   <body>
     <header>
-      <h1>CardRelay</h1>
-      <p>Preview your Collectr collection before syncing.</p>
-      <button id="developer-toggle" class="secondary">Developer tools</button>
+      <div class="brand-mark" aria-hidden="true">CR</div>
+      <div>
+        <h1>CardRelay</h1>
+        <p>Keep Collectr and Dex in sync.</p>
+      </div>
     </header>
     <main>
-      <section>
-        <label for="port">Companion port</label>
-        <input id="port" type="number" min="1024" max="65535" value="8765">
-        <label for="token">Pairing token</label>
-        <input id="token" type="password" autocomplete="off" spellcheck="false">
-        <button id="save" class="secondary">Save pairing</button>
+      <details id="connection-settings">
+        <summary><span>Connection</span><span id="connection-state">Set up</span></summary>
+        <div class="settings-grid">
+          <label for="port">Companion port</label>
+          <input id="port" type="number" min="1024" max="65535" value="8765">
+          <label for="token">Pairing token</label>
+          <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste token">
+          <button id="save" class="secondary">Save connection</button>
+        </div>
+      </details>
+
+      <section class="workflow-card">
+        <div class="section-heading">
+          <div>
+            <span id="service-label" class="eyebrow">Current page</span>
+            <h2 id="action-title">Open Collectr or Dex</h2>
+          </div>
+          <button id="refresh" class="icon-button" title="Refresh status" aria-label="Refresh status">↻</button>
+        </div>
+        <div id="status" role="status">Open your Collectr portfolio or Dex collection to begin.</div>
+        <div class="actions">
+          <button id="start">Capture collection</button>
+          <button id="start-catalog" class="secondary" hidden>Capture Dex catalog</button>
+          <button id="send" hidden disabled>Save capture</button>
+        </div>
       </section>
-      <section>
-        <div id="status" role="status">Open your Collectr portfolio to begin.</div>
-        <button id="start">Start portfolio capture</button>
-        <button id="start-catalog" class="secondary" hidden>Start Dex catalog capture</button>
-        <button id="refresh" class="secondary">Refresh status</button>
-        <button id="send" disabled>Send preview to CardRelay</button>
-      </section>
-      <section id="reliability-evidence">
-        <h2>Milestone 6 reliability evidence</h2>
-        <p>For the currently selected Collectr portfolio, record two complete captures without edits. This stores only counts, diagnostics, and a canonical fingerprint locally.</p>
-        <button id="start-reliability" class="secondary">Start 2-capture comparison</button>
-        <button id="copy-reliability" class="secondary" disabled>Copy evidence summary</button>
-        <div id="reliability-status" aria-live="polite">No reliability series is active.</div>
-      </section>
-      <section id="capture-issues" hidden>
-        <h2>Capture issues</h2>
+
+      <section id="capture-issues" class="notice warning" hidden>
+        <h2>Needs attention</h2>
         <div id="capture-issues-list" aria-live="polite"></div>
       </section>
-      <section>
-        <h2>Collectr → Dex diff</h2>
-        <button id="build-diff" class="secondary">Build visual diff</button>
-        <div id="diff-summary">Capture both services to compare them.</div>
-        <div id="diff-list" aria-live="polite"></div>
+
+      <section class="sync-card">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">Collectr → Dex</span>
+            <h2>Sync</h2>
+          </div>
+          <button id="build-diff" class="secondary compact">Review</button>
+        </div>
+        <div id="diff-summary" class="muted">Capture both collections to see what will change.</div>
+        <div id="sync-stats" class="stats" hidden>
+          <div><strong id="stat-adds">0</strong><span>Add</span></div>
+          <div><strong id="stat-updates">0</strong><span>Update</span></div>
+          <div><strong id="stat-removals">0</strong><span>Remove</span></div>
+          <div><strong id="stat-review">0</strong><span>Review</span></div>
+        </div>
+        <details id="change-details" hidden>
+          <summary id="change-summary">View card changes</summary>
+          <div id="diff-list" aria-live="polite"></div>
+        </details>
       </section>
-      <section id="safe-write" hidden>
-        <h2>Apply safe Dex changes</h2>
-        <p>This section applies only additions and quantity increases shown in the preview. Controlled removal testing, when enabled by the companion, uses the separate section below.</p>
-        <label for="safe-write-confirmation">Confirmation code</label>
-        <input id="safe-write-confirmation" autocomplete="off" spellcheck="false" maxlength="12">
-        <button id="apply-safe-write" disabled>Apply additions and increases</button>
-        <div id="safe-write-status" aria-live="polite"></div>
-      </section>
-      <section id="removal-write" hidden>
-        <h2>Controlled Dex removal test</h2>
-        <p>This can set only a CardRelay-managed card quantity to zero, within the companion's configured removal thresholds. Review the red diff entry and use a disposable test card first.</p>
-        <label for="removal-confirmation">Destructive confirmation code</label>
-        <input id="removal-confirmation" autocomplete="off" spellcheck="false" maxlength="12">
-        <button id="apply-removal" class="destructive-action" disabled>Remove managed card from Dex</button>
-        <div id="removal-status" aria-live="polite"></div>
-      </section>
-      <section>
+
+      <section id="review-section" class="notice warning" hidden>
         <h2>Match review</h2>
-        <p>Confirm only when the Collectr and Dex printings are the same card.</p>
-        <div id="review-summary">Build the diff to load probable and ambiguous matches.</div>
+        <div id="review-summary"></div>
         <div id="review-list" aria-live="polite"></div>
       </section>
-      <section id="developer-tools" hidden>
-      <p id="developer-tools-status">Developer tools are available only on supported service pages.</p>
-      <section id="write-research" hidden>
-        <h2>Dex write-contract research</h2>
-        <p>Arm this only before you manually make one small, reversible Dex collection change. CardRelay records schema, never values, and does not replay the request.</p>
-        <button id="arm-write-research" class="secondary">Arm schema-only observation</button>
-        <button id="submit-write-research" class="secondary" disabled>Validate observed schema</button>
-        <div id="write-research-status">No write observation is armed.</div>
-        <div id="write-research-results" aria-live="polite"></div>
+
+      <section id="safe-write" class="notice success" hidden>
+        <h2>Ready to sync</h2>
+        <div id="safe-write-status" aria-live="polite"></div>
+        <button id="apply-safe-write">Sync additions and updates</button>
       </section>
+
+      <section id="removal-write" class="notice danger" hidden>
+        <h2>Approve removals</h2>
+        <p>Removals change data in Dex. Review the cards above, then enter the approval code.</p>
+        <label for="removal-confirmation">Approval code</label>
+        <input id="removal-confirmation" autocomplete="off" spellcheck="false" maxlength="12">
+        <button id="apply-removal" class="destructive-action" disabled>Remove approved cards</button>
+        <div id="removal-status" aria-live="polite"></div>
       </section>
     </main>
     <script src="popup.js"></script>
