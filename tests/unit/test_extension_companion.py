@@ -18,10 +18,12 @@ from card_relay.extension.companion import (
     RemovalTestUnavailable,
     SafeWriteUnavailable,
     SyncPreviewUnavailable,
+    process_collectr_backup_status,
     process_collectr_capture,
     process_dex_capture,
     process_dex_write_observations,
     process_mapping_decision,
+    process_mapping_decisions,
     process_removal_prepare,
     process_removal_report,
     process_safe_write_prepare,
@@ -119,6 +121,27 @@ def test_extension_capture_reuses_browser_normalization_and_stores_snapshot(
         serialized = json.dumps(row.metadata_json)
         assert "Fixturemon" not in serialized
         assert "fictional-holding" not in serialized
+
+
+def test_collectr_captures_are_timestamped_reusable_backups(tmp_path: Path) -> None:
+    database_path = tmp_path / "card-relay.db"
+
+    first = process_collectr_capture(_payload(), database_path)
+    first_status = process_collectr_backup_status(database_path)
+
+    assert first_status.backup_count == 1
+    assert first_status.latest is not None
+    assert first_status.latest.snapshot_id == first.snapshot_id
+    assert first_status.latest.captured_at == first.captured_at
+    assert first_status.latest.unique_entries == 3
+    assert first_status.latest.total_quantity == 4
+
+    second = process_collectr_capture(_payload(), database_path)
+    second_status = process_collectr_backup_status(database_path)
+
+    assert second_status.backup_count == 2
+    assert second_status.latest is not None
+    assert second_status.latest.snapshot_id == second.snapshot_id
 
 
 @pytest.mark.parametrize(
@@ -339,6 +362,32 @@ def test_mapping_decision_is_current_candidate_bound_and_persistent(tmp_path: Pa
             },
             database_path,
         )
+
+
+def test_bulk_mapping_decisions_validate_then_refresh_once(tmp_path: Path) -> None:
+    database_path = tmp_path / "card-relay.db"
+    process_collectr_capture(_payload(), database_path)
+    process_dex_capture(_reviewable_dex_payload(), database_path)
+    review = process_sync_preview(database_path).mapping_reviews[0]
+    destination_id = review.candidates[0].destination_id
+
+    refreshed = process_mapping_decisions(
+        {
+            "decisions": [
+                {
+                    "action": "confirm",
+                    "source_fingerprint": review.source_fingerprint,
+                    "destination_id": destination_id,
+                }
+            ]
+        },
+        database_path,
+    )
+
+    assert refreshed.mapping_review_count == 0
+    assert MappingRepository(create_database(database_path)).list_confirmed("dex") == {
+        review.source_fingerprint: destination_id
+    }
 
 
 def test_rejecting_mapping_candidate_persists_and_clears_review(tmp_path: Path) -> None:
@@ -619,10 +668,16 @@ def test_extension_exposes_polished_guided_sync_controls() -> None:
     assert "await loadSyncPreview(false)" in popup
     assert "View ${totalChanges} card change" in popup
     assert "Match review" in html
-    assert "Confirm match" in popup
-    assert "Reject candidate" in popup
+    assert "Confirm selected" in html
+    assert "Reject selected" in html
+    assert "Select suggested" in html
     assert "card-relay-mapping-decision" in popup
     assert "/v1/mappings/decisions" in background
+    assert "card-relay-mapping-decisions" in popup
+    assert "/v1/mappings/decisions/batch" in background
+    assert "card-relay-collectr-backup-status" in popup
+    assert "/v1/collectr/backups/status" in background
+    assert "Using saved Collectr scan" in popup
     assert "Ready to sync" in html
     assert "card-relay-safe-write-prepare" in popup
     assert "card-relay-dex-safe-write-execute" in popup

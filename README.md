@@ -79,7 +79,7 @@ The token is stored only in this local Chrome extension profile. Restarting the 
 2. Open CardRelay and select **Capture Collectr**. CardRelay opens the Products view and scrolls while Collectr loads the collection.
 3. Reopen CardRelay when capture finishes. Select **Save Collectr capture** when it appears.
 
-The popup shows a short success or attention message instead of pagination internals. The companion still validates the complete untrusted browser payload, discards raw response bodies, and stores only the normalized collection and snapshot metadata locally. An incomplete capture can support observed additions, but never removals.
+The popup shows a short success or attention message instead of pagination internals. Every successful scan is retained locally with its timestamp in `card-relay.db`; reopening or refreshing the popup automatically reuses the latest saved scan and shows its age, totals, and backup count. Scan again whenever Collectr changes, especially before planning removals. The companion validates the complete untrusted browser payload, discards raw response bodies, and stores only the normalized collection and snapshot metadata locally. An incomplete capture can support observed additions, but never removals.
 
 ### 5. Capture Dex and sync
 
@@ -87,7 +87,7 @@ The popup shows a short success or attention message instead of pagination inter
 2. Open Dex **Search**, then select **Capture catalog**.
 3. When both are ready, select **Save Dex capture**. CardRelay automatically refreshes the sync review.
 4. Use the four summary counts to review additions, updates, removals, and records needing attention. Card details stay collapsed unless you open **View card changes**.
-5. Resolve **Match review** only when CardRelay cannot safely identify a printing. Confirm only when the card, set, collector number, and finish agree.
+5. Resolve **Match review** only when CardRelay cannot safely identify a printing. Select individual rows or use **Select suggested**, verify the proposed Dex identities, then confirm or reject the selected rows together. Ambiguous rows are not selected automatically.
 6. For additions and increases, select the single **Sync changes** button. No typed code is required for these non-destructive writes.
 7. Capture Dex again after every write attempt to verify the result and unlock the next sync.
 

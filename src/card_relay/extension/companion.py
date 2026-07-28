@@ -5,6 +5,7 @@ import secrets
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -112,6 +113,7 @@ class CollectrExtensionCapture(BaseModel):
 
 class CompanionCaptureResult(BaseModel):
     snapshot_id: str
+    captured_at: datetime
     collection_fingerprint: str = Field(min_length=16, max_length=128)
     completeness: str
     unique_entries: int
@@ -324,6 +326,30 @@ class MappingDecisionRequest(BaseModel):
     destination_id: str = Field(min_length=1, max_length=512)
 
 
+class MappingDecisionBatchRequest(BaseModel):
+    decisions: list[MappingDecisionRequest] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def source_fingerprints_are_unique(self) -> "MappingDecisionBatchRequest":
+        fingerprints = [decision.source_fingerprint for decision in self.decisions]
+        if len(fingerprints) != len(set(fingerprints)):
+            raise ValueError("bulk mapping decisions contain duplicate source fingerprints")
+        return self
+
+
+class CompanionSavedCollectrCapture(BaseModel):
+    snapshot_id: str
+    captured_at: datetime
+    completeness: str
+    unique_entries: int
+    total_quantity: int
+
+
+class CompanionCollectrBackupStatus(BaseModel):
+    backup_count: int
+    latest: CompanionSavedCollectrCapture | None
+
+
 class CompanionSyncPreviewResult(BaseModel):
     destination: Literal["dex"] = "dex"
     source_completeness: str
@@ -512,6 +538,7 @@ def process_collectr_capture(
     SourceCollectionRepository(engine).add(snapshot, collection)
     return CompanionCaptureResult(
         snapshot_id=snapshot.snapshot_id,
+        captured_at=snapshot.created_at,
         collection_fingerprint=snapshot.collection_fingerprint,
         completeness=collection.completeness.value,
         unique_entries=len(collection.entries),
@@ -523,6 +550,25 @@ def process_collectr_capture(
         skipped_non_card_count=diagnostics.skipped_non_card_count,
         warnings=diagnostics.warnings,
         capture_issues=[issue.model_dump() for issue in diagnostics.capture_issues],
+    )
+
+
+def process_collectr_backup_status(database_path: Path) -> CompanionCollectrBackupStatus:
+    total, snapshots = SnapshotRepository(create_database(database_path)).recent("collectr")
+    latest = snapshots[0] if snapshots else None
+    return CompanionCollectrBackupStatus(
+        backup_count=total,
+        latest=(
+            CompanionSavedCollectrCapture(
+                snapshot_id=latest.snapshot_id,
+                captured_at=latest.created_at,
+                completeness=latest.completeness.value,
+                unique_entries=latest.total_unique_entries,
+                total_quantity=latest.total_quantity,
+            )
+            if latest is not None
+            else None
+        ),
     )
 
 
@@ -1007,6 +1053,34 @@ def process_mapping_decision(
     return process_sync_preview(database_path, safety_options)
 
 
+def process_mapping_decisions(
+    payload: object,
+    database_path: Path,
+    safety_options: CompanionSafetyOptions | None = None,
+) -> CompanionSyncPreviewResult:
+    request = MappingDecisionBatchRequest.model_validate(payload)
+    process_sync_preview(database_path, safety_options)
+    engine = create_database(database_path)
+    pending = {
+        str(item["source_fingerprint"]): MatchResult.model_validate(item["match"])
+        for item in MappingReviewRepository(engine).list_pending("dex")
+    }
+    for decision in request.decisions:
+        match = pending.get(decision.source_fingerprint)
+        if match is None:
+            raise MappingDecisionUnavailable("mapping_review_stale")
+        if decision.destination_id not in match.candidate_ids:
+            raise MappingDecisionUnavailable("mapping_candidate_not_offered")
+    MappingRepository(engine).apply_decisions(
+        "dex",
+        [
+            (decision.action, decision.source_fingerprint, decision.destination_id)
+            for decision in request.decisions
+        ],
+    )
+    return process_sync_preview(database_path, safety_options)
+
+
 def _companion_mapping_review(item: dict[str, object]) -> CompanionMappingReview:
     match = MatchResult.model_validate(item["match"])
     offered_ids = set(match.candidate_ids)
@@ -1150,6 +1224,8 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             "/v1/dex/removal-reports",
             "/v1/sync/previews",
             "/v1/mappings/decisions",
+            "/v1/mappings/decisions/batch",
+            "/v1/collectr/backups/status",
         }:
             self._write_json(404, {"error": "not_found"})
             return
@@ -1207,6 +1283,12 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
                 result = process_mapping_decision(
                     payload, self.server.database_path, self.server.safety_options
                 )
+            elif self.path == "/v1/mappings/decisions/batch":
+                result = process_mapping_decisions(
+                    payload, self.server.database_path, self.server.safety_options
+                )
+            elif self.path == "/v1/collectr/backups/status":
+                result = process_collectr_backup_status(self.server.database_path)
             else:
                 result = process_collectr_capture(payload, self.server.database_path)
         except (UnicodeDecodeError, json.JSONDecodeError):

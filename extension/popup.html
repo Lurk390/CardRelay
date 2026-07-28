@@ -35,6 +35,7 @@
           <button id="refresh" class="icon-button" title="Refresh status" aria-label="Refresh status">↻</button>
         </div>
         <div id="status" role="status">Open your Collectr portfolio or Dex collection to begin.</div>
+        <div id="saved-capture" class="saved-capture" hidden></div>
         <div class="actions">
           <button id="start">Capture collection</button>
           <button id="start-catalog" class="secondary" hidden>Capture Dex catalog</button>
@@ -71,6 +72,12 @@
       <section id="review-section" class="notice warning" hidden>
         <h2>Match review</h2>
         <div id="review-summary"></div>
+        <div id="review-toolbar" class="review-toolbar" hidden>
+          <button id="select-suggested" class="secondary">Select suggested</button>
+          <span id="review-selected-count">0 selected</span>
+          <button id="confirm-selected">Confirm selected</button>
+          <button id="reject-selected" class="reject">Reject selected</button>
+        </div>
         <div id="review-list" aria-live="polite"></div>
       </section>
 

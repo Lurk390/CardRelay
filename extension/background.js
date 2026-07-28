@@ -6,6 +6,7 @@ void chrome.storage.session.setAccessLevel({
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!["card-relay-companion-submit", "card-relay-sync-preview", "card-relay-mapping-decision",
+    "card-relay-mapping-decisions", "card-relay-collectr-backup-status",
     "card-relay-safe-write-prepare", "card-relay-safe-write-report",
     "card-relay-removal-prepare", "card-relay-removal-report"]
     .includes(message?.type)) {
@@ -21,6 +22,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     try {
       const isPreview = message.type === "card-relay-sync-preview";
       const isMappingDecision = message.type === "card-relay-mapping-decision";
+      const isMappingDecisions = message.type === "card-relay-mapping-decisions";
+      const isCollectrBackupStatus = message.type === "card-relay-collectr-backup-status";
       const isSafeWritePrepare = message.type === "card-relay-safe-write-prepare";
       const isSafeWriteReport = message.type === "card-relay-safe-write-report";
       const isRemovalPrepare = message.type === "card-relay-removal-prepare";
@@ -32,6 +35,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       let capturePath = "/v1/collectr/captures";
       if (isPreview) capturePath = "/v1/sync/previews";
       else if (isMappingDecision) capturePath = "/v1/mappings/decisions";
+      else if (isMappingDecisions) capturePath = "/v1/mappings/decisions/batch";
+      else if (isCollectrBackupStatus) capturePath = "/v1/collectr/backups/status";
       else if (isSafeWritePrepare) capturePath = "/v1/dex/safe-write-batches";
       else if (isSafeWriteReport) capturePath = "/v1/dex/safe-write-reports";
       else if (isDexWriteObservation) capturePath = "/v1/dex/write-observations";
@@ -47,9 +52,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         },
         body: JSON.stringify(
           isMappingDecision ? message.decision
-            : ((isSafeWritePrepare || isSafeWriteReport || isRemovalPrepare || isRemovalReport)
-              ? message.payload
-              : (message.capture || {}))
+            : (isMappingDecisions ? { decisions: message.decisions }
+              : ((isSafeWritePrepare || isSafeWriteReport || isRemovalPrepare || isRemovalReport)
+                ? message.payload
+                : (message.capture || {})))
         ),
         cache: "no-store"
       });

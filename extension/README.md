@@ -19,15 +19,15 @@ This unpacked Manifest V3 extension captures Collectr source data and Dex destin
 
 ## Everyday sync workflow
 
-1. Open Collectr and select **Capture Collectr**. Reopen CardRelay when it finishes and select **Save Collectr capture**.
+1. Open Collectr and select **Capture Collectr**. Reopen CardRelay when it finishes and select **Save Collectr capture**. On later popup refreshes, CardRelay automatically reuses this timestamped local scan until you save a newer one.
 2. Open Dex Collection and select **Capture collection**.
 3. Open Dex Search and select **Capture catalog**. Select **Save Dex capture** when it appears.
 4. CardRelay automatically loads the sync summary. The four counts show additions, updates, removals, and records needing review; the card list is collapsed by default.
-5. Resolve a match only when CardRelay asks. Confirm only when the complete printing identity agrees.
+5. Resolve a match only when CardRelay asks. Select rows individually or use **Select suggested**, verify the chosen Dex printing, then confirm or reject the selected rows as one batch. Ambiguous rows are never selected automatically.
 6. Select **Sync changes** for additions and increases. This is the single explicit approval for non-destructive writes; the popup supplies the state-bound backend code automatically.
 7. Capture Dex again after every write attempt before continuing.
 
-The connection form collapses after pairing. Capture messages describe only the next useful action; pagination, schema, and internal diagnostics stay out of the normal popup. Raw Collectr responses remain in memory only until validation. Dex catalog pages stay in tab memory, and sanitized collection pages use Chrome session storage across navigation.
+The connection form collapses after pairing. Capture messages describe only the next useful action; pagination, schema, and internal diagnostics stay out of the normal popup. Each validated normalized Collectr scan remains in the local SQLite database as a timestamped backup. The popup shows which saved scan is in use and rebuilds the sync preview from it when reopened; scan again whenever the source collection changes. Raw Collectr responses remain in memory only until validation. Dex catalog pages stay in tab memory, and sanitized collection pages use Chrome session storage across navigation.
 
 ## Controlled removal test
 
@@ -54,7 +54,7 @@ The companion binds only to loopback and requires the ephemeral pairing token. I
 ## Current limits
 
 - The extension is an unpacked development build; it is not packaged or published.
-- Capture and preview are manual. Periodic checks and notifications are not implemented.
+- Capture is manual; the latest saved scan and preview reload automatically. Periodic checks and notifications are not implemented.
 - A complete capture requires contiguous 30-record pages, the empty terminal page, exact/unstacked records, recognized condition and grading metadata, and a visible-total match.
 - Browser snapshots cannot authorize general decreases or removals at this stage. The explicit companion removal-test flag permits only a complete-capture, threshold-bounded removal of a previously managed disposable card.
 - Mapping confirmations only resolve identity; they do not approve a write or destructive operation.

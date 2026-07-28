@@ -1,7 +1,8 @@
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Engine, delete, select
+from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from card_relay.domain.enums import MatchStatus, OperationType
@@ -91,6 +92,51 @@ class MappingRepository:
                 session.delete(row)
             self._add_rejection(session, fingerprint, destination, destination_id)
             self._clear_review(session, fingerprint, destination)
+            session.commit()
+
+    def apply_decisions(
+        self,
+        destination: str,
+        decisions: Sequence[tuple[str, str, str]],
+    ) -> None:
+        with Session(self.engine) as session:
+            for action, fingerprint, destination_id in decisions:
+                row = session.scalar(
+                    select(MappingRow).where(
+                        MappingRow.source_fingerprint == fingerprint,
+                        MappingRow.destination_name == destination,
+                    )
+                )
+                if action == "confirm":
+                    if row and row.status == "rejected" and row.destination_id != destination_id:
+                        self._add_rejection(session, fingerprint, destination, row.destination_id)
+                    if row:
+                        row.destination_id, row.status = destination_id, "confirmed"
+                    else:
+                        session.add(
+                            MappingRow(
+                                source_fingerprint=fingerprint,
+                                destination_name=destination,
+                                destination_id=destination_id,
+                            )
+                        )
+                    session.execute(
+                        delete(RejectedMappingRow).where(
+                            RejectedMappingRow.source_fingerprint == fingerprint,
+                            RejectedMappingRow.destination_name == destination,
+                            RejectedMappingRow.destination_id == destination_id,
+                        )
+                    )
+                elif action == "reject":
+                    if row and row.status == "rejected":
+                        self._add_rejection(session, fingerprint, destination, row.destination_id)
+                        session.delete(row)
+                    elif row and row.destination_id == destination_id:
+                        session.delete(row)
+                    self._add_rejection(session, fingerprint, destination, destination_id)
+                else:
+                    raise ValueError("unsupported mapping decision")
+                self._clear_review(session, fingerprint, destination)
             session.commit()
 
     def list_rejected(self, destination: str) -> dict[str, set[str]]:
@@ -537,6 +583,33 @@ class SnapshotRepository:
             if row is None:
                 return None
             return SourceSnapshot.model_validate(row.metadata_json)
+
+    def recent(
+        self, source_application: str = "collectr", *, limit: int = 20
+    ) -> tuple[int, list[SourceSnapshot]]:
+        with Session(self.engine) as session:
+            total = session.scalar(
+                select(func.count())
+                .select_from(SnapshotRow)
+                .join(
+                    SourceCollectionSnapshotRow,
+                    SourceCollectionSnapshotRow.snapshot_id == SnapshotRow.snapshot_id,
+                )
+                .where(SnapshotRow.source_application == source_application)
+            )
+            rows = session.scalars(
+                select(SnapshotRow)
+                .join(
+                    SourceCollectionSnapshotRow,
+                    SourceCollectionSnapshotRow.snapshot_id == SnapshotRow.snapshot_id,
+                )
+                .where(SnapshotRow.source_application == source_application)
+                .order_by(SnapshotRow.created_at.desc())
+                .limit(limit)
+            )
+            return int(total or 0), [
+                SourceSnapshot.model_validate(row.metadata_json) for row in rows
+            ]
 
 
 class SyncAuditRepository:

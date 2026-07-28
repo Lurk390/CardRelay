@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
@@ -42,6 +43,22 @@ def test_mapping_persistence(tmp_path) -> None:
     assert repository.list_confirmed("mock") == {}
     assert repository.list_rejected("mock") == {"v1:abc": {"mock-1"}}
     assert repository.list_all()[0]["status"] == "rejected"
+
+
+def test_bulk_mapping_decisions_are_atomic(tmp_path) -> None:
+    repository = MappingRepository(create_database(tmp_path / "bulk-mappings.db"))
+
+    with pytest.raises(ValueError, match="unsupported mapping decision"):
+        repository.apply_decisions(
+            "mock",
+            [
+                ("confirm", "v2:first", "candidate-a"),
+                ("unsupported", "v2:second", "candidate-b"),
+            ],
+        )
+
+    assert repository.list_confirmed("mock") == {}
+    assert repository.list_rejected("mock") == {}
 
 
 def test_multiple_rejections_do_not_overwrite_confirmed_mapping(tmp_path) -> None:

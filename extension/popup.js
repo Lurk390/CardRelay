@@ -31,8 +31,15 @@ const changeDetails = document.querySelector("#change-details");
 const changeSummary = document.querySelector("#change-summary");
 const reviewSection = document.querySelector("#review-section");
 const captureIssuesList = document.querySelector("#capture-issues-list");
+const savedCapture = document.querySelector("#saved-capture");
+const reviewToolbar = document.querySelector("#review-toolbar");
+const selectSuggestedButton = document.querySelector("#select-suggested");
+const reviewSelectedCount = document.querySelector("#review-selected-count");
+const confirmSelectedButton = document.querySelector("#confirm-selected");
+const rejectSelectedButton = document.querySelector("#reject-selected");
 let latestSafeWritePreview = null;
 let latestRemovalPreview = null;
+const visibleMappingReviews = new Map();
 
 function displayCaptureIssues(issues) {
   captureIssuesList.replaceChildren();
@@ -136,6 +143,7 @@ document.querySelector("#save").addEventListener("click", async () => {
   await chrome.storage.local.set({ companionPort: port, pairingToken });
   connectionState.textContent = "Saved";
   connectionSettings.open = false;
+  await Promise.all([loadSavedCollectrBackup(), loadSyncPreview(false)]);
   statusElement.textContent = "Connection saved. Open Collectr or Dex to continue.";
 });
 
@@ -185,7 +193,9 @@ catalogButton.addEventListener("click", async () => {
   }
 });
 
-document.querySelector("#refresh").addEventListener("click", refreshStatus);
+document.querySelector("#refresh").addEventListener("click", async () => {
+  await Promise.all([refreshStatus(), loadSavedCollectrBackup(), loadSyncPreview(false)]);
+});
 
 function displaySyncPreview(result) {
   const counts = result.change_counts || {};
@@ -400,33 +410,95 @@ async function submitMappingDecision(review, action, destinationId) {
   }
 }
 
+function updateBulkReviewControls() {
+  const selected = reviewList.querySelectorAll(".review-select:checked").length;
+  reviewSelectedCount.textContent = `${selected} selected`;
+  confirmSelectedButton.disabled = selected === 0;
+  rejectSelectedButton.disabled = selected === 0;
+  confirmSelectedButton.textContent = selected ? `Confirm selected (${selected})` : "Confirm selected";
+}
+
+function selectedMappingDecisions(action) {
+  const decisions = [];
+  for (const checkbox of reviewList.querySelectorAll(".review-select:checked")) {
+    const item = checkbox.closest(".review-item");
+    const review = visibleMappingReviews.get(item?.dataset.sourceFingerprint || "");
+    const selected = item?.querySelector('input[type="radio"]:checked');
+    if (review && selected) {
+      decisions.push({
+        action,
+        source_fingerprint: review.source_fingerprint,
+        destination_id: selected.value
+      });
+    }
+  }
+  return decisions;
+}
+
+async function submitMappingDecisions(action) {
+  const decisions = selectedMappingDecisions(action);
+  if (!decisions.length) return;
+  reviewSummary.textContent = `${action === "confirm" ? "Confirming" : "Rejecting"} ${decisions.length} selected match${decisions.length === 1 ? "" : "es"}…`;
+  for (const control of reviewSection.querySelectorAll("button, input")) control.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "card-relay-mapping-decisions",
+      decisions
+    });
+    if (!response?.ok) {
+      reviewSummary.textContent = `Mappings unchanged: ${response?.error || "unknown error"}`;
+      for (const control of reviewSection.querySelectorAll("button, input")) control.disabled = false;
+      updateBulkReviewControls();
+      return;
+    }
+    displaySyncPreview(response.result);
+  } catch {
+    reviewSummary.textContent = "Mappings unchanged: companion unavailable";
+    for (const control of reviewSection.querySelectorAll("button, input")) control.disabled = false;
+    updateBulkReviewControls();
+  }
+}
+
 function displayMappingReviews(result) {
   const reviews = result.mapping_reviews || [];
   const total = result.mapping_review_count || 0;
   reviewList.replaceChildren();
+  visibleMappingReviews.clear();
   reviewSection.hidden = total === 0;
+  reviewToolbar.hidden = total === 0;
   if (!total) {
     reviewSummary.textContent = "No probable or ambiguous matches are waiting for review.";
     return;
   }
-  const visibleReviews = reviews.slice(0, 20);
+  const visibleReviews = reviews.slice(0, 50);
   reviewSummary.textContent = [
     `${total} match${total === 1 ? "" : "es"} waiting for review.`,
     total > visibleReviews.length || result.mapping_reviews_truncated
-      ? `Showing the first ${visibleReviews.length}; decisions refresh the queue.`
-      : "Review each suggested match before syncing."
+      ? `Showing the first ${visibleReviews.length}; bulk decisions refresh the queue.`
+      : "Select rows, verify the suggested Dex card, then confirm or reject them together."
   ].join(" ");
   for (const review of visibleReviews) {
+    visibleMappingReviews.set(review.source_fingerprint, review);
     const item = document.createElement("div");
     item.className = "review-item";
+    item.dataset.sourceFingerprint = review.source_fingerprint;
+    item.dataset.reviewStatus = review.status;
 
+    const heading = document.createElement("div");
+    heading.className = "review-heading";
+    const select = document.createElement("input");
+    select.type = "checkbox";
+    select.className = "review-select";
+    select.setAttribute("aria-label", `Select ${identityLabel(review.source_identity)}`);
+    select.addEventListener("change", updateBulkReviewControls);
     const source = document.createElement("div");
     source.className = "review-source";
     source.textContent = `Collectr: ${identityLabel(review.source_identity)}`;
+    heading.append(select, source);
     const reason = document.createElement("div");
     reason.className = "review-reason";
     reason.textContent = `${review.status}: ${(review.reasons || []).join("; ")}`;
-    item.append(source, reason);
+    item.append(heading, reason);
 
     const radioName = `mapping-${review.source_fingerprint}`;
     for (const [index, candidate] of (review.candidates || []).entries()) {
@@ -454,10 +526,10 @@ function displayMappingReviews(result) {
     const actions = document.createElement("div");
     actions.className = "review-actions";
     const confirm = document.createElement("button");
-    confirm.textContent = "Confirm match";
+    confirm.textContent = "Confirm";
     const reject = document.createElement("button");
     reject.className = "reject";
-    reject.textContent = "Reject candidate";
+    reject.textContent = "Reject";
     const decide = action => {
       const selected = item.querySelector(`input[name="${radioName}"]:checked`);
       if (!selected) {
@@ -472,8 +544,41 @@ function displayMappingReviews(result) {
     item.append(actions);
     reviewList.append(item);
   }
+  updateBulkReviewControls();
 }
 
+selectSuggestedButton.addEventListener("click", () => {
+  for (const item of reviewList.querySelectorAll(".review-item")) {
+    const checkbox = item.querySelector(".review-select");
+    checkbox.checked = item.dataset.reviewStatus === "probable";
+  }
+  updateBulkReviewControls();
+});
+confirmSelectedButton.addEventListener("click", () => void submitMappingDecisions("confirm"));
+rejectSelectedButton.addEventListener("click", () => void submitMappingDecisions("reject"));
+
+function displaySavedCollectrBackup(result) {
+  const latest = result?.latest;
+  savedCapture.hidden = !latest;
+  if (!latest) return;
+  const captured = new Date(latest.captured_at);
+  const timestamp = Number.isNaN(captured.getTime())
+    ? "saved previously"
+    : captured.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  const backups = Number(result.backup_count || 0);
+  savedCapture.textContent = `Using saved Collectr scan · ${timestamp} · ${latest.unique_entries} cards / ${latest.total_quantity} total · ${backups} backup${backups === 1 ? "" : "s"}`;
+}
+
+async function loadSavedCollectrBackup() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "card-relay-collectr-backup-status" });
+    if (!response?.ok) return false;
+    displaySavedCollectrBackup(response.result);
+    return Boolean(response.result.latest);
+  } catch {
+    return false;
+  }
+}
 async function loadSyncPreview(showErrors = false) {
   try {
     const response = await chrome.runtime.sendMessage({ type: "card-relay-sync-preview" });
@@ -518,17 +623,20 @@ sendButton.addEventListener("click", async () => {
         ? `Collectr saved · ${result.unique_entries} cards`
         : "Collectr saved, but the capture is incomplete. Run it again before removals.";
     }
+    if (service === "collectr") await loadSavedCollectrBackup();
     await loadSyncPreview(false);
   } catch (error) {
     statusElement.textContent = error.message;
     sendButton.disabled = false;
   }
 });
-chrome.storage.local.get(["companionPort", "pairingToken"]).then(settings => {
+async function initializePopup() {
+  const settings = await chrome.storage.local.get(["companionPort", "pairingToken"]);
   portInput.value = settings.companionPort || 8765;
   tokenInput.value = settings.pairingToken || "";
   const connected = Boolean(settings.pairingToken);
   connectionState.textContent = connected ? "Saved" : "Set up";
   connectionSettings.open = !connected;
-});
-void refreshStatus();
+  await Promise.all([refreshStatus(), loadSavedCollectrBackup(), loadSyncPreview(false)]);
+}
+void initializePopup();
