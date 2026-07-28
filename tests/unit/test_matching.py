@@ -134,6 +134,50 @@ def test_probable_match_uses_strong_anchors_and_explains_score() -> None:
     assert result.alternatives[0].reasons[-1].startswith("normalized card-name similarity")
 
 
+def test_unique_complete_composite_match_is_automatically_confirmed() -> None:
+    source_identity = CanonicalCardIdentity(
+        card_name="Embermouse", set_name="Mythic Sparks", collector_number="1"
+    )
+    candidate = DestinationCatalogRecord(
+        destination_id="complete",
+        identity=source_identity.model_copy(update={"set_code": "MSP"}),
+    )
+
+    result = match_collection(_collection(source_identity), [candidate])[0]
+
+    assert result.status is MatchStatus.EXACT
+    assert result.candidate is not None
+    assert result.candidate.destination_id == candidate.destination_id
+    assert result.score == 1
+    assert result.mismatched_fields == []
+    assert result.reasons == ["unique complete composite match; automatically confirmed"]
+
+
+def test_complete_composite_match_with_another_candidate_still_requires_review() -> None:
+    source_identity = CanonicalCardIdentity(
+        card_name="Embermouse", set_name="Mythic Sparks", collector_number="1"
+    )
+    catalog = [
+        DestinationCatalogRecord(
+            destination_id="complete",
+            identity=source_identity.model_copy(update={"set_code": "MSP"}),
+        ),
+        DestinationCatalogRecord(
+            destination_id="similar",
+            identity=source_identity.model_copy(
+                update={"card_name": "ember", "set_code": "MSP-ALT"}
+            ),
+        ),
+    ]
+
+    result = match_collection(_collection(source_identity), catalog)[0]
+
+    assert result.status is MatchStatus.PROBABLE
+    assert result.candidate is not None
+    assert result.candidate.destination_id == "complete"
+    assert result.score == 1
+
+
 def test_probable_matching_indexes_strong_anchors_without_changing_set_fallback(
     monkeypatch,
 ) -> None:

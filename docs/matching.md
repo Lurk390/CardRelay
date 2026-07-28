@@ -4,10 +4,11 @@ CardRelay resolves a Collectr identity to a destination catalog record in a dete
 
 1. A user-confirmed persistent mapping whose destination ID still exists in the current catalog.
 2. One exact canonical fingerprint match.
-3. A constrained probable match requiring human confirmation.
-4. An ambiguous, rejected, or unmatched review result.
+3. A unique complete composite match with a true score of `1.0` and no mismatched fields.
+4. A constrained probable match requiring human confirmation.
+5. An ambiguous, rejected, or unmatched review result.
 
-Only the first two outcomes are represented as `exact` and can reach normal sync planning. `probable` and `ambiguous` always produce a blocked `manual_review_required` operation. Confirming a probable candidate turns that source fingerprint and destination ID into a persistent exact mapping on the next run.
+The first three outcomes are represented as `exact` and can reach normal sync planning. The complete composite outcome is automatic only when it is the sole qualifying candidate; a rounded display percentage, competing candidate, or any mismatched field cannot trigger it. `probable` and `ambiguous` always produce a blocked `manual_review_required` operation. Confirming a probable candidate turns that source fingerprint and destination ID into a persistent exact mapping on the next run.
 
 ## Catalog normalization and cache
 

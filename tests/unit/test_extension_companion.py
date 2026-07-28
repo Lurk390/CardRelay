@@ -60,6 +60,13 @@ def _payload() -> dict[str, object]:
     }
 
 
+def _reviewable_dex_payload() -> dict[str, object]:
+    payload = json.loads(DEX_FIXTURE.read_text(encoding="utf-8"))
+    payload["collection_pages"][0]["result"][0]["card"]["name"] = "Fixturemo"
+    payload["catalog_pages"][0]["result"][0]["name"] = "Fixturemo"
+    return payload
+
+
 def _write_observation_payload() -> dict[str, object]:
     return {
         "contract_version": "dex-write-observation-v1",
@@ -282,23 +289,20 @@ def test_companion_builds_card_level_read_only_sync_preview(tmp_path: Path) -> N
 
     assert result.destination == "dex"
     assert result.changes
-    assert result.destination_writes_enabled is False
+    assert result.destination_writes_enabled is True
     assert result.destructive_confirmation_code is None
     assert sum(result.change_counts.values()) == len(result.changes)
     assert all(change.card for change in result.changes)
     assert all(change.current_quantity >= 0 for change in result.changes)
-    assert result.mapping_review_count == 1
+    assert result.mapping_review_count == 0
+    assert result.mapping_reviews == []
     assert result.mapping_reviews_truncated is False
-    review = result.mapping_reviews[0]
-    assert review.source_identity.card_name == "fixturemon"
-    assert review.status.value == "probable"
-    assert [candidate.destination_id for candidate in review.candidates] == ["fixture-card-1::holo"]
 
 
 def test_mapping_decision_is_current_candidate_bound_and_persistent(tmp_path: Path) -> None:
     database_path = tmp_path / "card-relay.db"
     process_collectr_capture(_payload(), database_path)
-    process_dex_capture(json.loads(DEX_FIXTURE.read_text(encoding="utf-8")), database_path)
+    process_dex_capture(_reviewable_dex_payload(), database_path)
     preview = process_sync_preview(database_path)
     review = preview.mapping_reviews[0]
     destination_id = review.candidates[0].destination_id
@@ -340,7 +344,7 @@ def test_mapping_decision_is_current_candidate_bound_and_persistent(tmp_path: Pa
 def test_rejecting_mapping_candidate_persists_and_clears_review(tmp_path: Path) -> None:
     database_path = tmp_path / "card-relay.db"
     process_collectr_capture(_payload(), database_path)
-    process_dex_capture(json.loads(DEX_FIXTURE.read_text(encoding="utf-8")), database_path)
+    process_dex_capture(_reviewable_dex_payload(), database_path)
     review = process_sync_preview(database_path).mapping_reviews[0]
     destination_id = review.candidates[0].destination_id
 
@@ -364,7 +368,7 @@ def test_companion_mapping_endpoint_rejects_unoffered_id_then_refreshes_preview(
 ) -> None:
     database_path = tmp_path / "card-relay.db"
     process_collectr_capture(_payload(), database_path)
-    process_dex_capture(json.loads(DEX_FIXTURE.read_text(encoding="utf-8")), database_path)
+    process_dex_capture(_reviewable_dex_payload(), database_path)
     review = process_sync_preview(database_path).mapping_reviews[0]
     server, token = serve_companion(database_path, 0, lambda: "test-token")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -405,15 +409,7 @@ def test_safe_dex_write_batch_is_confirmation_bound_and_requires_recapture(tmp_p
     dex_capture = json.loads(DEX_FIXTURE.read_text(encoding="utf-8"))
     dex_capture["collection_pages"][0]["result"][0]["quantities"]["friendBallHolo"] = 3
     process_dex_capture(dex_capture, database_path)
-    review = process_sync_preview(database_path).mapping_reviews[0]
-    preview = process_mapping_decision(
-        {
-            "action": "confirm",
-            "source_fingerprint": review.source_fingerprint,
-            "destination_id": review.candidates[0].destination_id,
-        },
-        database_path,
-    )
+    preview = process_sync_preview(database_path)
 
     assert preview.destination_writes_enabled is True
     assert preview.safe_write_count == 1
@@ -472,15 +468,8 @@ def test_controlled_removal_zeroes_only_managed_finish_and_requires_recapture(
     quantities = dex_capture["collection_pages"][0]["result"][0]["quantities"]
     quantities["normal"] = 3
     process_dex_capture(dex_capture, database_path)
-    review = process_sync_preview(database_path).mapping_reviews[0]
-    safe_preview = process_mapping_decision(
-        {
-            "action": "confirm",
-            "source_fingerprint": review.source_fingerprint,
-            "destination_id": review.candidates[0].destination_id,
-        },
-        database_path,
-    )
+    safe_preview = process_sync_preview(database_path)
+
     safe_batch = process_safe_write_prepare(
         {
             "confirmation_code": safe_preview.safe_write_confirmation_code,

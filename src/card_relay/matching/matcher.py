@@ -143,6 +143,24 @@ def match_collection(
         qualifying = [item for item in probable if item.score >= minimum_probable_score]
         if qualifying:
             best = qualifying[0]
+            if (
+                len(qualifying) == 1
+                and best.score >= 1 - _SCORE_EPSILON
+                and not best.mismatched_fields
+            ):
+                results.append(
+                    MatchResult(
+                        source_fingerprint=fingerprint,
+                        status=MatchStatus.EXACT,
+                        candidate=best.candidate,
+                        score=1,
+                        reasons=["unique complete composite match; automatically confirmed"],
+                        matched_fields=best.matched_fields,
+                        candidate_ids=[best.candidate.destination_id],
+                        alternatives=qualifying,
+                    )
+                )
+                continue
             competing = [
                 item
                 for item in qualifying

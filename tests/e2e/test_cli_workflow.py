@@ -320,7 +320,7 @@ def test_dex_schema_inspection_requires_explicit_acknowledgement(tmp_path: Path)
     assert "--acknowledge-schema-inspection" in plain_output
 
 
-def test_dex_read_only_capture_supports_confirmed_dry_run_comparison(tmp_path: Path) -> None:
+def test_dex_read_only_capture_auto_confirms_exact_dry_run_comparison(tmp_path: Path) -> None:
     database_path = tmp_path / "card-relay.db"
     process_dex_capture(
         json.loads(DEX_EXTENSION_FIXTURE.read_text(encoding="utf-8")), database_path
@@ -336,22 +336,10 @@ def test_dex_read_only_capture_supports_confirmed_dry_run_comparison(tmp_path: P
     matched = runner.invoke(app, ["match", *common, "--details"])
     assert matched.exit_code == 0
     match_payload = json.loads(matched.stdout)
-    assert match_payload["matches"]["probable"] == 1
-    probable = match_payload["results"][0]
-    assert probable["candidate"]["destination_id"] == "fixture-card-1::holo"
-
-    confirmed = runner.invoke(
-        app,
-        [
-            "mappings",
-            "confirm",
-            probable["source_fingerprint"],
-            "fixture-card-1::holo",
-            "--destination",
-            "dex",
-        ],
-    )
-    assert confirmed.exit_code == 0
+    assert match_payload["matches"]["exact"] == 1
+    assert match_payload["pending_review"] == 0
+    exact = match_payload["results"][0]
+    assert exact["candidate"]["destination_id"] == "fixture-card-1::holo"
 
     planned = runner.invoke(app, ["plan", *common])
     assert planned.exit_code == 0

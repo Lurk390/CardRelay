@@ -131,7 +131,7 @@ uv run card-relay sync --csv tests/fixtures/collectr/plausible_export.csv --dest
 
 ## Matching review
 
-Exact canonical identities match automatically. A probable candidate must share exact game, set, and collector-number anchors and satisfy the configured language and variant gates. It still cannot sync until explicitly confirmed. Near-tied candidates are ambiguous and are never guessed.
+Exact canonical identities match automatically. CardRelay also auto-confirms a sole 100% composite candidate when every compared identity field agrees. A probable candidate must share exact game, set, and collector-number anchors and satisfy the configured language and variant gates, but it still cannot sync until explicitly confirmed. Rounded near-100%, competing, and near-tied candidates are never auto-confirmed.
 
 ```bash
 uv run card-relay match --csv tests/fixtures/collectr/plausible_export.csv --destination mock --details --json
