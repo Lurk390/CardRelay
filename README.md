@@ -79,7 +79,7 @@ The token is stored only in this local Chrome extension profile. Restarting the 
 2. Open CardRelay and select **Capture Collectr**. CardRelay opens the Products view and scrolls while Collectr loads the collection.
 3. Reopen CardRelay when capture finishes. Select **Save Collectr capture** when it appears.
 
-The popup shows a short success or attention message instead of pagination internals. Every successful scan is retained locally with its timestamp in `card-relay.db`; reopening or refreshing the popup automatically reuses the latest saved scan and shows its age, totals, and backup count. Scan again whenever Collectr changes, especially before planning removals. The companion validates the complete untrusted browser payload, discards raw response bodies, and stores only the normalized collection and snapshot metadata locally. An incomplete capture can support observed additions, but never removals.
+The popup shows a short success or attention message instead of pagination internals. The extension workflow retains only Pokémon entries; other TCGs are ignored and reported in the save summary. Every successful scan is retained locally with its timestamp in `card-relay.db`; reopening or refreshing the popup automatically reuses the latest saved scan and shows its age, Pokémon totals, and backup count. Scan again whenever Collectr changes, especially before planning removals. The companion validates the complete untrusted browser payload, discards raw response bodies, and stores only the normalized Pokémon collection and snapshot metadata locally. An incomplete capture can support observed additions, but never removals.
 
 ### 5. Capture Dex and sync
 

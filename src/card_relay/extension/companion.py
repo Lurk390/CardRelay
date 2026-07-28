@@ -26,8 +26,10 @@ from card_relay.destinations.dex.normalizer import (
 from card_relay.domain.enums import ExtractionCompleteness, MatchStatus, OperationType
 from card_relay.domain.models import (
     CanonicalCardIdentity,
+    CanonicalCollection,
     DestinationBackupSnapshot,
     DestinationReadSnapshot,
+    collection_fingerprint,
 )
 from card_relay.domain.operations import OperationResult, SyncPlan, SyncResult
 from card_relay.domain.results import MatchResult
@@ -123,6 +125,7 @@ class CompanionCaptureResult(BaseModel):
     invalid_record_reasons: BrowserInvalidRecordCounts
     skipped_watchlist_count: int
     skipped_non_card_count: int
+    filtered_non_pokemon_count: int
     trusted_for_destructive_planning: Literal[False] = False
     destination_writes_enabled: Literal[False] = False
     warnings: list[str]
@@ -511,6 +514,23 @@ class DexRemovalReportResult(DexSafeWriteReportResult):
     backup_snapshot_id: str
 
 
+def _pokemon_collection(collection: CanonicalCollection) -> tuple[CanonicalCollection, int]:
+    entries = []
+    for entry in collection.entries:
+        if entry.identity.game not in {"pokemon", "pokémon"}:
+            continue
+        if entry.identity.game == "pokemon":
+            entries.append(entry)
+        else:
+            entries.append(
+                entry.model_copy(
+                    update={"identity": entry.identity.model_copy(update={"game": "pokemon"})}
+                )
+            )
+    filtered_count = len(collection.entries) - len(entries)
+    return collection.model_copy(update={"entries": entries}), filtered_count
+
+
 def process_collectr_capture(
     payload: object,
     database_path: Path,
@@ -530,9 +550,15 @@ def process_collectr_capture(
         grade_details=grade_details,
     )
     source = CollectrBrowserSource(lambda: capture)
-    collection = source.load_collection()
+    collection, filtered_non_pokemon_count = _pokemon_collection(source.load_collection())
     diagnostics = source.diagnostics()
-    snapshot = source.create_snapshot()
+    snapshot = source.create_snapshot().model_copy(
+        update={
+            "total_unique_entries": len(collection.entries),
+            "total_quantity": collection.total_quantity,
+            "collection_fingerprint": collection_fingerprint(collection),
+        }
+    )
     engine = create_database(database_path)
     SnapshotRepository(engine).add(snapshot)
     SourceCollectionRepository(engine).add(snapshot, collection)
@@ -548,14 +574,19 @@ def process_collectr_capture(
         invalid_record_reasons=diagnostics.invalid_record_reasons,
         skipped_watchlist_count=diagnostics.skipped_watchlist_count,
         skipped_non_card_count=diagnostics.skipped_non_card_count,
+        filtered_non_pokemon_count=filtered_non_pokemon_count,
         warnings=diagnostics.warnings,
         capture_issues=[issue.model_dump() for issue in diagnostics.capture_issues],
     )
 
 
 def process_collectr_backup_status(database_path: Path) -> CompanionCollectrBackupStatus:
-    total, snapshots = SnapshotRepository(create_database(database_path)).recent("collectr")
+    engine = create_database(database_path)
+    total, snapshots = SnapshotRepository(engine).recent("collectr")
     latest = snapshots[0] if snapshots else None
+    latest_collection = SourceCollectionRepository(engine).latest("collectr")
+    if latest_collection is not None:
+        latest_collection, _ = _pokemon_collection(latest_collection)
     return CompanionCollectrBackupStatus(
         backup_count=total,
         latest=(
@@ -563,8 +594,16 @@ def process_collectr_backup_status(database_path: Path) -> CompanionCollectrBack
                 snapshot_id=latest.snapshot_id,
                 captured_at=latest.created_at,
                 completeness=latest.completeness.value,
-                unique_entries=latest.total_unique_entries,
-                total_quantity=latest.total_quantity,
+                unique_entries=(
+                    len(latest_collection.entries)
+                    if latest_collection is not None
+                    else latest.total_unique_entries
+                ),
+                total_quantity=(
+                    latest_collection.total_quantity
+                    if latest_collection is not None
+                    else latest.total_quantity
+                ),
             )
             if latest is not None
             else None
@@ -626,6 +665,7 @@ def _build_dex_sync_plan(
     destination = DestinationReadRepository(engine).get("dex")
     if source is None:
         raise SyncPreviewUnavailable("collectr_capture_required")
+    source, _ = _pokemon_collection(source)
     if destination is None:
         raise SyncPreviewUnavailable("dex_capture_required")
     removal_test_ready = (

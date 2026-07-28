@@ -107,8 +107,9 @@ def test_extension_capture_reuses_browser_normalization_and_stores_snapshot(
     result = process_collectr_capture(_payload(), database_path)
 
     assert result.completeness == "complete"
-    assert result.unique_entries == 3
-    assert result.total_quantity == 4
+    assert result.unique_entries == 2
+    assert result.total_quantity == 3
+    assert result.filtered_non_pokemon_count == 1
     assert len(result.collection_fingerprint) >= 16
     assert result.pagination_complete
     assert result.skipped_non_card_count == 1
@@ -121,6 +122,9 @@ def test_extension_capture_reuses_browser_normalization_and_stores_snapshot(
         serialized = json.dumps(row.metadata_json)
         assert "Fixturemon" not in serialized
         assert "fictional-holding" not in serialized
+    saved = SourceCollectionRepository(create_database(database_path)).latest()
+    assert saved is not None
+    assert {entry.identity.game for entry in saved.entries} == {"pokemon"}
 
 
 def test_collectr_captures_are_timestamped_reusable_backups(tmp_path: Path) -> None:
@@ -133,8 +137,8 @@ def test_collectr_captures_are_timestamped_reusable_backups(tmp_path: Path) -> N
     assert first_status.latest is not None
     assert first_status.latest.snapshot_id == first.snapshot_id
     assert first_status.latest.captured_at == first.captured_at
-    assert first_status.latest.unique_entries == 3
-    assert first_status.latest.total_quantity == 4
+    assert first_status.latest.unique_entries == 2
+    assert first_status.latest.total_quantity == 3
 
     second = process_collectr_capture(_payload(), database_path)
     second_status = process_collectr_backup_status(database_path)
@@ -658,7 +662,8 @@ def test_extension_exposes_polished_guided_sync_controls() -> None:
     background = (EXTENSION / "background.js").read_text(encoding="utf-8")
     html = (EXTENSION / "popup.html").read_text(encoding="utf-8")
 
-    assert "Keep Collectr and Dex in sync." in html
+    assert "Keep your Pokémon collection in sync." in html
+    assert "other TCG ignored" in popup
     assert "Save connection" in html
     assert "Capture destination" in popup
     assert "Capture source" in popup

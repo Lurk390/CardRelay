@@ -27,7 +27,7 @@ This unpacked Manifest V3 extension captures Collectr source data and Dex destin
 6. Select **Sync changes** for additions and increases. This is the single explicit approval for non-destructive writes; the popup supplies the state-bound backend code automatically.
 7. Capture Dex again after every write attempt before continuing.
 
-The connection form collapses after pairing. Capture messages describe only the next useful action; pagination, schema, and internal diagnostics stay out of the normal popup. Each validated normalized Collectr scan remains in the local SQLite database as a timestamped backup. The popup shows which saved scan is in use and rebuilds the sync preview from it when reopened; scan again whenever the source collection changes. Raw Collectr responses remain in memory only until validation. Dex catalog pages stay in tab memory, and sanitized collection pages use Chrome session storage across navigation.
+The connection form collapses after pairing. Capture messages describe only the next useful action; pagination, schema, and internal diagnostics stay out of the normal popup. CardRelay validates the complete Collectr capture, then retains only normalized Pokémon entries; other TCGs are ignored and counted in the save message. Each Pokémon scan remains in the local SQLite database as a timestamped backup. The popup shows which saved scan is in use and rebuilds the sync preview from it when reopened; scan again whenever the source collection changes. Raw Collectr responses remain in memory only until validation. Dex catalog pages stay in tab memory, and sanitized collection pages use Chrome session storage across navigation.
 
 ## Controlled removal test
 

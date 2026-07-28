@@ -568,7 +568,7 @@ function displaySavedCollectrBackup(result) {
     ? "saved previously"
     : captured.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
   const backups = Number(result.backup_count || 0);
-  savedCapture.textContent = `Using saved Collectr scan · ${timestamp} · ${latest.unique_entries} cards / ${latest.total_quantity} total · ${backups} backup${backups === 1 ? "" : "s"}`;
+  savedCapture.textContent = `Using saved Collectr scan · ${timestamp} · ${latest.unique_entries} Pokémon cards / ${latest.total_quantity} total · ${backups} backup${backups === 1 ? "" : "s"}`;
 }
 
 async function loadSavedCollectrBackup() {
@@ -621,8 +621,9 @@ sendButton.addEventListener("click", async () => {
         : "Dex saved, but some card finishes need attention before syncing.";
     } else {
       displayCaptureIssues(result.capture_issues);
+      const ignored = result.filtered_non_pokemon_count || 0;
       statusElement.textContent = result.completeness === "complete"
-        ? `Collectr saved · ${result.unique_entries} cards`
+        ? `Collectr saved · ${result.unique_entries} Pokémon cards${ignored ? ` · ${ignored} other TCG ignored` : ""}`
         : "Collectr saved, but the capture is incomplete. Run it again before removals.";
     }
     if (service === "collectr") await loadSavedCollectrBackup();
