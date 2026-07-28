@@ -28,6 +28,7 @@ from card_relay.domain.models import (
     CanonicalCardIdentity,
     CanonicalCollection,
     DestinationBackupSnapshot,
+    DestinationCaptureSnapshot,
     DestinationReadSnapshot,
     collection_fingerprint,
 )
@@ -49,6 +50,7 @@ from card_relay.storage.database import create_database
 from card_relay.storage.repositories import (
     CatalogCacheRepository,
     DestinationBackupRepository,
+    DestinationCaptureRepository,
     DestinationReadRepository,
     ManagedDestinationRepository,
     MappingRepository,
@@ -171,6 +173,8 @@ class DexUploadState:
 
 
 class DexCompanionCaptureResult(BaseModel):
+    snapshot_id: str
+    captured_at: datetime
     catalog_records: int
     collection_records: int
     total_quantity: int
@@ -351,6 +355,19 @@ class CompanionSavedCollectrCapture(BaseModel):
 class CompanionCollectrBackupStatus(BaseModel):
     backup_count: int
     latest: CompanionSavedCollectrCapture | None
+
+
+class CompanionSavedDexCapture(BaseModel):
+    snapshot_id: str
+    captured_at: datetime
+    completeness: Literal["complete", "incomplete"]
+    unique_entries: int
+    total_quantity: int
+
+
+class CompanionDexBackupStatus(BaseModel):
+    backup_count: int
+    latest: CompanionSavedDexCapture | None
 
 
 class CompanionSyncPreviewResult(BaseModel):
@@ -611,6 +628,38 @@ def process_collectr_backup_status(database_path: Path) -> CompanionCollectrBack
     )
 
 
+def process_dex_backup_status(database_path: Path) -> CompanionDexBackupStatus:
+    engine = create_database(database_path)
+    repository = DestinationCaptureRepository(engine)
+    total, snapshots = repository.recent("dex")
+    if not snapshots:
+        current = DestinationReadRepository(engine).get("dex")
+        if current is not None:
+            legacy = DestinationCaptureSnapshot(
+                destination_name=current.destination_name,
+                captured_at=current.captured_at,
+                collection=current.collection,
+                complete=current.complete,
+            )
+            repository.add(legacy)
+            total, snapshots = repository.recent("dex")
+    latest = snapshots[0] if snapshots else None
+    return CompanionDexBackupStatus(
+        backup_count=total,
+        latest=(
+            CompanionSavedDexCapture(
+                snapshot_id=latest.snapshot_id,
+                captured_at=latest.captured_at,
+                completeness="complete" if latest.complete else "incomplete",
+                unique_entries=len(latest.collection),
+                total_quantity=sum(entry.quantity for entry in latest.collection),
+            )
+            if latest is not None
+            else None
+        ),
+    )
+
+
 def process_dex_capture(payload: object, database_path: Path) -> DexCompanionCaptureResult:
     request = DexExtensionCapture.model_validate(payload)
     catalog_cards = [card for page in request.catalog_pages for card in page.result]
@@ -635,9 +684,11 @@ def process_dex_capture(payload: object, database_path: Path) -> DexCompanionCap
             "destination_writes_enabled": False,
         },
     )
-    DestinationReadRepository(engine).replace(snapshot)
+    snapshot_id = DestinationReadRepository(engine).replace(snapshot)
     CatalogCacheRepository(engine).replace("dex", catalog)
     return DexCompanionCaptureResult(
+        snapshot_id=snapshot_id,
+        captured_at=snapshot.captured_at,
         catalog_records=len(catalog),
         collection_records=len(collection),
         total_quantity=sum(entry.quantity for entry in collection),
@@ -1266,6 +1317,7 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             "/v1/mappings/decisions",
             "/v1/mappings/decisions/batch",
             "/v1/collectr/backups/status",
+            "/v1/dex/backups/status",
         }:
             self._write_json(404, {"error": "not_found"})
             return
@@ -1329,6 +1381,8 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
                 )
             elif self.path == "/v1/collectr/backups/status":
                 result = process_collectr_backup_status(self.server.database_path)
+            elif self.path == "/v1/dex/backups/status":
+                result = process_dex_backup_status(self.server.database_path)
             else:
                 result = process_collectr_capture(payload, self.server.database_path)
         except (UnicodeDecodeError, json.JSONDecodeError):

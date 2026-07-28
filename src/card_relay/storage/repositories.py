@@ -10,6 +10,7 @@ from card_relay.domain.models import (
     CanonicalCardIdentity,
     CanonicalCollection,
     DestinationBackupSnapshot,
+    DestinationCaptureSnapshot,
     DestinationCatalogRecord,
     DestinationCollectionEntry,
     DestinationReadSnapshot,
@@ -22,6 +23,7 @@ from card_relay.storage.models import (
     CatalogCacheEntryRow,
     CatalogCacheStateRow,
     DestinationBackupSnapshotRow,
+    DestinationCaptureSnapshotRow,
     DestinationReadSnapshotRow,
     ManagedDestinationRecordRow,
     MappingReviewRow,
@@ -344,7 +346,7 @@ class DestinationReadRepository:
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
 
-    def replace(self, snapshot: DestinationReadSnapshot) -> None:
+    def replace(self, snapshot: DestinationReadSnapshot) -> str:
         catalog_payload = json.dumps(
             [record.model_dump(mode="json") for record in snapshot.catalog],
             sort_keys=True,
@@ -354,6 +356,12 @@ class DestinationReadRepository:
             [record.model_dump(mode="json") for record in snapshot.collection],
             sort_keys=True,
             separators=(",", ":"),
+        )
+        capture = DestinationCaptureSnapshot(
+            destination_name=snapshot.destination_name,
+            captured_at=snapshot.captured_at,
+            collection=snapshot.collection,
+            complete=snapshot.complete,
         )
         with Session(self.engine) as session:
             row = session.get(DestinationReadSnapshotRow, snapshot.destination_name)
@@ -374,7 +382,17 @@ class DestinationReadRepository:
                 row.collection_payload = collection_payload
                 row.complete = int(snapshot.complete)
                 row.metadata_json = snapshot.metadata
+            session.add(
+                DestinationCaptureSnapshotRow(
+                    snapshot_id=capture.snapshot_id,
+                    destination_name=capture.destination_name,
+                    captured_at=capture.captured_at,
+                    collection_payload=collection_payload,
+                    complete=int(capture.complete),
+                )
+            )
             session.commit()
+        return capture.snapshot_id
 
     def get(self, destination: str) -> DestinationReadSnapshot | None:
         with Session(self.engine) as session:
@@ -398,6 +416,63 @@ class DestinationReadRepository:
                 complete=bool(row.complete),
                 metadata=row.metadata_json,
             )
+
+
+class DestinationCaptureRepository:
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+
+    def add(self, snapshot: DestinationCaptureSnapshot) -> str:
+        payload = json.dumps(
+            [record.model_dump(mode="json") for record in snapshot.collection],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        with Session(self.engine) as session:
+            session.add(
+                DestinationCaptureSnapshotRow(
+                    snapshot_id=snapshot.snapshot_id,
+                    destination_name=snapshot.destination_name,
+                    captured_at=snapshot.captured_at,
+                    collection_payload=payload,
+                    complete=int(snapshot.complete),
+                )
+            )
+            session.commit()
+        return snapshot.snapshot_id
+
+    def recent(
+        self, destination: str, *, limit: int = 20
+    ) -> tuple[int, list[DestinationCaptureSnapshot]]:
+        with Session(self.engine) as session:
+            total = session.scalar(
+                select(func.count())
+                .select_from(DestinationCaptureSnapshotRow)
+                .where(DestinationCaptureSnapshotRow.destination_name == destination)
+            )
+            rows = session.scalars(
+                select(DestinationCaptureSnapshotRow)
+                .where(DestinationCaptureSnapshotRow.destination_name == destination)
+                .order_by(DestinationCaptureSnapshotRow.captured_at.desc())
+                .limit(limit)
+            ).all()
+            return int(total or 0), [
+                DestinationCaptureSnapshot(
+                    snapshot_id=row.snapshot_id,
+                    destination_name=row.destination_name,
+                    captured_at=(
+                        row.captured_at
+                        if row.captured_at.tzinfo is not None
+                        else row.captured_at.replace(tzinfo=UTC)
+                    ),
+                    collection=[
+                        DestinationCollectionEntry.model_validate(item)
+                        for item in json.loads(row.collection_payload)
+                    ],
+                    complete=bool(row.complete),
+                )
+                for row in rows
+            ]
 
 
 class DestinationBackupRepository:

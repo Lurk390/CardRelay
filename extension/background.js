@@ -7,6 +7,7 @@ void chrome.storage.session.setAccessLevel({
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!["card-relay-companion-submit", "card-relay-sync-preview", "card-relay-mapping-decision",
     "card-relay-mapping-decisions", "card-relay-collectr-backup-status",
+    "card-relay-dex-backup-status",
     "card-relay-safe-write-prepare", "card-relay-safe-write-report",
     "card-relay-removal-prepare", "card-relay-removal-report"]
     .includes(message?.type)) {
@@ -24,6 +25,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const isMappingDecision = message.type === "card-relay-mapping-decision";
       const isMappingDecisions = message.type === "card-relay-mapping-decisions";
       const isCollectrBackupStatus = message.type === "card-relay-collectr-backup-status";
+      const isDexBackupStatus = message.type === "card-relay-dex-backup-status";
       const isSafeWritePrepare = message.type === "card-relay-safe-write-prepare";
       const isSafeWriteReport = message.type === "card-relay-safe-write-report";
       const isRemovalPrepare = message.type === "card-relay-removal-prepare";
@@ -37,6 +39,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       else if (isMappingDecision) capturePath = "/v1/mappings/decisions";
       else if (isMappingDecisions) capturePath = "/v1/mappings/decisions/batch";
       else if (isCollectrBackupStatus) capturePath = "/v1/collectr/backups/status";
+      else if (isDexBackupStatus) capturePath = "/v1/dex/backups/status";
       else if (isSafeWritePrepare) capturePath = "/v1/dex/safe-write-batches";
       else if (isSafeWriteReport) capturePath = "/v1/dex/safe-write-reports";
       else if (isDexWriteObservation) capturePath = "/v1/dex/write-observations";
@@ -79,7 +82,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         : {
           ok: false,
           error: response.status === 404 &&
-            (isMappingDecisions || isCollectrBackupStatus)
+            (isMappingDecisions || isCollectrBackupStatus || isDexBackupStatus)
             ? "companion_update_required"
             : (payload.reason || payload.error || `http_${response.status}`),
           issues: Array.isArray(payload.issues) ? payload.issues.slice(0, 20) : []

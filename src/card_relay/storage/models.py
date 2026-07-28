@@ -63,6 +63,15 @@ class DestinationReadSnapshotRow(Base):
     metadata_json: Mapped[dict[str, object]] = mapped_column(JSON)
 
 
+class DestinationCaptureSnapshotRow(Base):
+    __tablename__ = "destination_capture_snapshots"
+    snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    destination_name: Mapped[str] = mapped_column(String(50), index=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    collection_payload: Mapped[str] = mapped_column(Text)
+    complete: Mapped[int] = mapped_column(Integer)
+
+
 class DestinationBackupSnapshotRow(Base):
     __tablename__ = "destination_backup_snapshots"
     backup_id: Mapped[str] = mapped_column(String(36), primary_key=True)

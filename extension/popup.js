@@ -39,6 +39,8 @@ const confirmSelectedButton = document.querySelector("#confirm-selected");
 const rejectSelectedButton = document.querySelector("#reject-selected");
 let latestSafeWritePreview = null;
 let latestRemovalPreview = null;
+let statusRefreshTimer = null;
+let statusRefreshInFlight = false;
 const visibleMappingReviews = new Map();
 
 function displayCaptureIssues(issues) {
@@ -108,14 +110,32 @@ function displayDexStatus(status) {
     statusElement.textContent = "Dex stopped responding while loading the catalog. Retry the capture.";
   } else if (status.catalogError) {
     statusElement.textContent = "Dex could not finish loading the catalog. Refresh Search, then retry.";
-  } else if (status.captureRunning || status.activeTarget) {
-    statusElement.textContent = "Capturing Dex… Keep this tab open until it finishes.";
+  } else if (status.activeTarget === "catalog") {
+    statusElement.textContent = status.catalogTotalPages
+      ? `Capturing Dex catalog… ${status.catalogPageCount} of ${status.catalogTotalPages} pages.`
+      : "Starting Dex catalog capture…";
+  } else if (status.activeTarget === "collection") {
+    statusElement.textContent = status.collectionTotalPages
+      ? `Capturing Dex collection… ${status.collectionPageCount} of ${status.collectionTotalPages} pages.`
+      : "Starting Dex collection capture…";
   } else if (status.collectionComplete) {
     statusElement.textContent = "Collection captured. Open Dex Search, then capture the catalog.";
   } else {
     statusElement.textContent = "Start with your Dex collection, then capture the catalog from Search.";
   }
+  scheduleStatusRefresh(status.activeTarget);
 }
+
+function scheduleStatusRefresh(activeTarget) {
+  if (statusRefreshTimer !== null) clearTimeout(statusRefreshTimer);
+  statusRefreshTimer = null;
+  if (!activeTarget) return;
+  statusRefreshTimer = setTimeout(() => {
+    statusRefreshTimer = null;
+    void refreshStatus();
+  }, 750);
+}
+
 function configureForService(service) {
   const isDex = service === "dex";
   serviceLabel.textContent = isDex ? "Dex" : "Collectr";
@@ -125,6 +145,8 @@ function configureForService(service) {
   sendButton.textContent = isDex ? "Save Dex capture" : "Save Collectr capture";
 }
 async function refreshStatus() {
+  if (statusRefreshInFlight) return;
+  statusRefreshInFlight = true;
   try {
     const { tab, service } = await activeSupportedTab();
     configureForService(service);
@@ -136,6 +158,8 @@ async function refreshStatus() {
   } catch (error) {
     sendButton.disabled = true;
     statusElement.textContent = error.message;
+  } finally {
+    statusRefreshInFlight = false;
   }
 }
 
@@ -149,7 +173,7 @@ document.querySelector("#save").addEventListener("click", async () => {
   await chrome.storage.local.set({ companionPort: port, pairingToken });
   connectionState.textContent = "Saved";
   connectionSettings.open = false;
-  await Promise.all([loadSavedCollectrBackup(), loadSyncPreview(false)]);
+  await Promise.all([loadSavedCapture(), loadSyncPreview(false)]);
   statusElement.textContent = "Connection saved. Open Collectr or Dex to continue.";
 });
 
@@ -200,7 +224,7 @@ catalogButton.addEventListener("click", async () => {
 });
 
 document.querySelector("#refresh").addEventListener("click", async () => {
-  await Promise.all([refreshStatus(), loadSavedCollectrBackup(), loadSyncPreview(false)]);
+  await Promise.all([refreshStatus(), loadSavedCapture(), loadSyncPreview(false)]);
 });
 
 function displaySyncPreview(result) {
@@ -587,6 +611,44 @@ async function loadSavedCollectrBackup() {
     return false;
   }
 }
+function displaySavedDexBackup(result) {
+  const latest = result?.latest;
+  savedCapture.hidden = !latest;
+  if (!latest) return;
+  const captured = new Date(latest.captured_at);
+  const timestamp = Number.isNaN(captured.getTime())
+    ? "saved previously"
+    : captured.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  const backups = Number(result.backup_count || 0);
+  savedCapture.textContent = `Using saved Dex snapshot · ${timestamp} · ${latest.unique_entries} cards / ${latest.total_quantity} total · ${backups} backup${backups === 1 ? "" : "s"}`;
+}
+
+async function loadSavedDexBackup() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "card-relay-dex-backup-status" });
+    if (!response?.ok) {
+      if (response?.error === "companion_update_required") {
+        savedCapture.hidden = false;
+        savedCapture.textContent = "Restart the CardRelay companion to enable saved Dex snapshots.";
+      }
+      return false;
+    }
+    displaySavedDexBackup(response.result);
+    return Boolean(response.result.latest);
+  } catch {
+    return false;
+  }
+}
+
+async function loadSavedCapture() {
+  try {
+    const { service } = await activeSupportedTab();
+    return service === "dex" ? await loadSavedDexBackup() : await loadSavedCollectrBackup();
+  } catch {
+    savedCapture.hidden = true;
+    return false;
+  }
+}
 async function loadSyncPreview(showErrors = false) {
   try {
     const response = await chrome.runtime.sendMessage({ type: "card-relay-sync-preview" });
@@ -632,7 +694,7 @@ sendButton.addEventListener("click", async () => {
         ? `Collectr saved · ${result.unique_entries} Pokémon cards${ignored ? ` · ${ignored} other TCG ignored` : ""}`
         : "Collectr saved, but the capture is incomplete. Run it again before removals.";
     }
-    if (service === "collectr") await loadSavedCollectrBackup();
+    await loadSavedCapture();
     await loadSyncPreview(false);
   } catch (error) {
     statusElement.textContent = error.message;
@@ -646,6 +708,6 @@ async function initializePopup() {
   const connected = Boolean(settings.pairingToken);
   connectionState.textContent = connected ? "Saved" : "Set up";
   connectionSettings.open = !connected;
-  await Promise.all([refreshStatus(), loadSavedCollectrBackup(), loadSyncPreview(false)]);
+  await Promise.all([refreshStatus(), loadSavedCapture(), loadSyncPreview(false)]);
 }
 void initializePopup();

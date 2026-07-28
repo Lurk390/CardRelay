@@ -134,6 +134,14 @@ class DestinationReadSnapshot(BaseModel):
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
+class DestinationCaptureSnapshot(BaseModel):
+    snapshot_id: str = Field(default_factory=lambda: str(uuid4()))
+    destination_name: str
+    captured_at: datetime
+    collection: list[DestinationCollectionEntry]
+    complete: bool
+
+
 class DestinationBackupSnapshot(BaseModel):
     backup_id: str = Field(default_factory=lambda: str(uuid4()))
     destination_name: str

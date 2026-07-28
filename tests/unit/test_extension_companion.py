@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from card_relay.domain.enums import ExtractionCompleteness, IngestionMethod
@@ -20,6 +20,7 @@ from card_relay.extension.companion import (
     SyncPreviewUnavailable,
     process_collectr_backup_status,
     process_collectr_capture,
+    process_dex_backup_status,
     process_dex_capture,
     process_dex_write_observations,
     process_mapping_decision,
@@ -32,7 +33,7 @@ from card_relay.extension.companion import (
     serve_companion,
 )
 from card_relay.storage.database import create_database
-from card_relay.storage.models import SnapshotRow
+from card_relay.storage.models import DestinationCaptureSnapshotRow, SnapshotRow
 from card_relay.storage.repositories import (
     DestinationBackupRepository,
     ManagedDestinationRepository,
@@ -148,6 +149,44 @@ def test_collectr_captures_are_timestamped_reusable_backups(tmp_path: Path) -> N
     assert second_status.latest.snapshot_id == second.snapshot_id
 
 
+def test_dex_captures_are_timestamped_reusable_backups(tmp_path: Path) -> None:
+    database_path = tmp_path / "card-relay.db"
+    payload = json.loads(DEX_FIXTURE.read_text(encoding="utf-8"))
+
+    first = process_dex_capture(payload, database_path)
+    first_status = process_dex_backup_status(database_path)
+
+    assert first_status.backup_count == 1
+    assert first_status.latest is not None
+    assert first_status.latest.snapshot_id == first.snapshot_id
+    assert first_status.latest.captured_at == first.captured_at
+    assert first_status.latest.unique_entries == 1
+    assert first_status.latest.total_quantity == first.total_quantity
+
+    second = process_dex_capture(payload, database_path)
+    second_status = process_dex_backup_status(database_path)
+
+    assert second_status.backup_count == 2
+    assert second_status.latest is not None
+    assert second_status.latest.snapshot_id == second.snapshot_id
+
+
+def test_dex_backup_status_preserves_a_legacy_latest_snapshot(tmp_path: Path) -> None:
+    database_path = tmp_path / "card-relay.db"
+    payload = json.loads(DEX_FIXTURE.read_text(encoding="utf-8"))
+    captured = process_dex_capture(payload, database_path)
+    with Session(create_database(database_path)) as session:
+        session.execute(delete(DestinationCaptureSnapshotRow))
+        session.commit()
+
+    status = process_dex_backup_status(database_path)
+
+    assert status.backup_count == 1
+    assert status.latest is not None
+    assert status.latest.captured_at == captured.captured_at
+    assert status.latest.total_quantity == captured.total_quantity
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
@@ -243,6 +282,21 @@ def test_companion_accepts_only_validated_dex_read_capture(tmp_path: Path) -> No
         assert payload["destination_writes_enabled"] is False
         assert "catalog" not in payload
         assert "collection" not in payload
+
+        connection.request(
+            "POST",
+            "/v1/dex/backups/status",
+            body="{}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        status_response = connection.getresponse()
+        status_payload = json.loads(status_response.read())
+        assert status_response.status == 201
+        assert status_payload["backup_count"] == 1
+        assert status_payload["latest"]["snapshot_id"] == payload["snapshot_id"]
     finally:
         connection.close()
         server.shutdown()
@@ -683,6 +737,11 @@ def test_extension_exposes_polished_guided_sync_controls() -> None:
     assert "card-relay-collectr-backup-status" in popup
     assert "/v1/collectr/backups/status" in background
     assert "Using saved Collectr scan" in popup
+    assert "card-relay-dex-backup-status" in popup
+    assert "/v1/dex/backups/status" in background
+    assert "Using saved Dex snapshot" in popup
+    assert "Capturing Dex catalog… ${status.catalogPageCount} of" in popup
+    assert "scheduleStatusRefresh(status.activeTarget)" in popup
     assert "companion_update_required" in background
     assert "Restart the CardRelay companion" in popup
     assert "Ready to sync" in html
