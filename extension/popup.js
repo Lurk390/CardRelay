@@ -257,6 +257,9 @@ function displaySyncPreview(result) {
   } else if (result.safe_write_block_reason === "dex_recapture_required_after_write_attempt" ||
       result.removal_block_reason === "dex_recapture_required_after_write_attempt") {
     diffSummary.textContent = "Capture Dex again to verify the last sync.";
+  } else if (result.safe_write_block_reason === "safe_write_metadata_unavailable") {
+    diffSummary.textContent =
+      "Capture Dex again with the updated extension before syncing these changes.";
   } else {
     diffSummary.textContent = `${totalChanges} changes found, but none are ready to apply.`;
   }

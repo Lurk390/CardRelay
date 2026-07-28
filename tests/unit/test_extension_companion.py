@@ -13,6 +13,8 @@ from card_relay.domain.models import CanonicalCollection, SourceSnapshot, collec
 from card_relay.extension.companion import (
     CollectrExtensionCapture,
     CompanionSafetyOptions,
+    DexSafeWritePrepareRequest,
+    DexSafeWriteReportRequest,
     DexWriteObservationCapture,
     MappingDecisionUnavailable,
     RemovalTestUnavailable,
@@ -566,6 +568,33 @@ def test_safe_dex_write_batch_is_confirmation_bound_and_requires_recapture(tmp_p
     assert blocked.safe_write_block_reason == "dex_recapture_required_after_write_attempt"
 
 
+def test_safe_write_contract_accepts_more_than_fifty_operations() -> None:
+    operation_ids = [f"large-operation-{index:03d}" for index in range(51)]
+
+    prepare = DexSafeWritePrepareRequest(
+        confirmation_code="A" * 12,
+        operation_ids=operation_ids,
+    )
+    report = DexSafeWriteReportRequest(
+        contract_version="dex-safe-write-report-v1",
+        plan_id=1,
+        confirmation_code="A" * 12,
+        results=[
+            {
+                "operation_id": operation_id,
+                "succeeded": True,
+                "outcome": "succeeded",
+                "status": 200,
+                "attempts": 1,
+            }
+            for operation_id in operation_ids
+        ],
+    )
+
+    assert len(prepare.operation_ids) == 51
+    assert len(report.results) == 51
+
+
 def test_controlled_removal_zeroes_only_managed_finish_and_requires_recapture(
     tmp_path: Path,
 ) -> None:
@@ -714,6 +743,7 @@ def test_sync_preview_reports_which_local_capture_is_missing(tmp_path: Path) -> 
 def test_extension_exposes_polished_guided_sync_controls() -> None:
     popup = (EXTENSION / "popup.js").read_text(encoding="utf-8")
     background = (EXTENSION / "background.js").read_text(encoding="utf-8")
+    dex_observer = (EXTENSION / "dex-page-observer.js").read_text(encoding="utf-8")
     html = (EXTENSION / "popup.html").read_text(encoding="utf-8")
 
     assert "Keep your Pokémon collection in sync." in html
@@ -744,6 +774,8 @@ def test_extension_exposes_polished_guided_sync_controls() -> None:
     assert "scheduleStatusRefresh(status.activeTarget)" in popup
     assert "companion_update_required" in background
     assert "Restart the CardRelay companion" in popup
+    assert "Capture Dex again with the updated extension" in popup
+    assert "maximumSafeWriteOperations = 2000" in dex_observer
     assert "Ready to sync" in html
     assert "card-relay-safe-write-prepare" in popup
     assert "card-relay-dex-safe-write-execute" in popup

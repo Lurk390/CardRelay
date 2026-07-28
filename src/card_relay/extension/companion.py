@@ -65,6 +65,7 @@ from card_relay.sync.preview import SyncPreviewChange, preview_changes
 
 MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 PRODUCT_PAGE_SIZE = 30
+MAX_SAFE_WRITE_OPERATIONS = 2000
 
 
 class SyncPreviewUnavailable(CardRelayError):
@@ -440,7 +441,7 @@ class DexSafeWritePrepareRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     confirmation_code: str = Field(min_length=12, max_length=12, pattern=r"^[A-F0-9]{12}$")
-    operation_ids: list[str] = Field(min_length=1, max_length=50)
+    operation_ids: list[str] = Field(min_length=1, max_length=MAX_SAFE_WRITE_OPERATIONS)
 
     @model_validator(mode="after")
     def operation_ids_are_unique(self) -> "DexSafeWritePrepareRequest":
@@ -453,7 +454,7 @@ class DexSafeWriteBatch(BaseModel):
     contract_version: Literal["dex-safe-write-batch-v1"] = "dex-safe-write-batch-v1"
     plan_id: int = Field(gt=0)
     confirmation_code: str
-    commands: list[DexSafeWriteCommand] = Field(min_length=1, max_length=50)
+    commands: list[DexSafeWriteCommand] = Field(min_length=1, max_length=MAX_SAFE_WRITE_OPERATIONS)
     recapture_required_after_attempt: Literal[True] = True
 
 
@@ -479,7 +480,9 @@ class DexSafeWriteReportRequest(BaseModel):
     contract_version: Literal["dex-safe-write-report-v1"]
     plan_id: int = Field(gt=0)
     confirmation_code: str = Field(min_length=12, max_length=12, pattern=r"^[A-F0-9]{12}$")
-    results: list[DexSafeWriteExecutionResult] = Field(min_length=1, max_length=50)
+    results: list[DexSafeWriteExecutionResult] = Field(
+        min_length=1, max_length=MAX_SAFE_WRITE_OPERATIONS
+    )
 
     @model_validator(mode="after")
     def result_ids_are_unique(self) -> "DexSafeWriteReportRequest":
@@ -498,7 +501,7 @@ class DexSafeWriteReportResult(BaseModel):
 
 
 class DexRemovalPrepareRequest(DexSafeWritePrepareRequest):
-    pass
+    operation_ids: list[str] = Field(min_length=1, max_length=10)
 
 
 class DexRemovalBatch(BaseModel):
@@ -814,8 +817,7 @@ def _safe_write_preview(
 ) -> tuple[list[DexSafeWriteCommand], str | None]:
     if audit.has_write_attempt_for_state("dex", plan.destination_collection_fingerprint):
         return [], "dex_recapture_required_after_write_attempt"
-    if len(plan.safe_write_operations) > 50:
-        return [], "safe_write_batch_limit_exceeded"
+
     try:
         return _safe_write_commands(plan, destination), None
     except (SafeWriteUnavailable, ValidationError):

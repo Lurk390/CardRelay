@@ -380,3 +380,43 @@ test("Dex executor applies a controlled removal as a full quantity-map PATCH", a
     quantities: { holo: 0, reverseHolo: 3 }
   });
 });
+
+test("Dex executor accepts more than fifty safe writes", async () => {
+  const observed = runObserver({ created: true });
+  const commands = Array.from({ length: 51 }, (_unused, index) => ({
+    operation_id: `large-addition-${String(index).padStart(3, "0")}`,
+    method: "POST",
+    origin: "https://clients.dextcg.com",
+    path: "/api/user/cards",
+    body: {
+      cardId: `card-${index}`,
+      quantities: { normal: 1 }
+    }
+  }));
+
+  observed.listeners.get("message")({
+    source: observed.pageWindow,
+    origin: "https://app.dextcg.com",
+    data: {
+      channel: "card-relay.dex.v1",
+      type: "safe-write-execute",
+      requestId: "large-addition-batch",
+      batch: {
+        contract_version: "dex-safe-write-batch-v1",
+        commands
+      }
+    }
+  });
+
+  let result;
+  for (let attempt = 0; attempt < 20 && !result; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    result = observed.messages.find(message => message.type === "safe-write-result");
+  }
+
+  assert.ok(result);
+  assert.equal(result.requestId, "large-addition-batch");
+  assert.equal(result.results.length, 51);
+  assert.ok(result.results.every(item => item.succeeded));
+  assert.equal(observed.fetchCalls.length, 51);
+});

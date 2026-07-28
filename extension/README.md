@@ -24,7 +24,7 @@ This unpacked Manifest V3 extension captures Collectr source data and Dex destin
 3. Open Dex Search and select **Capture catalog**. Select **Save Dex capture** when it appears.
 4. CardRelay automatically loads the sync summary. The four counts show additions, updates, removals, and records needing review; the card list is collapsed by default.
 5. Resolve a match only when CardRelay asks. Select rows individually or use **Select suggested**, verify the chosen Dex printing, then confirm or reject the selected rows as one batch. Ambiguous rows are never selected automatically.
-6. Select **Sync changes** for additions and increases. This is the single explicit approval for non-destructive writes; the popup supplies the state-bound backend code automatically.
+6. Select **Sync changes** for additions and increases. This is the single explicit approval for the complete non-destructive batch; the popup supplies the state-bound backend code automatically. Keep the popup and Dex tab open while a large collection sync runs.
 7. Capture Dex again after every write attempt before continuing.
 
 The connection form collapses after pairing. Capture messages describe only the next useful action; pagination, schema, and internal diagnostics stay out of the normal popup. CardRelay validates the complete Collectr capture, then retains only normalized Pokémon entries; other TCGs are ignored and counted in the save message. Each Pokémon scan remains in the local SQLite database as a timestamped backup. Dex capture progress updates live in the popup. Each saved Dex capture also creates a timestamped collection backup, while the latest normalized catalog and collection remain available for sync review after refresh without another scan. The popup shows which saved snapshot is in use; capture again whenever either collection changes. Raw Collectr responses remain in memory only until validation, and raw Dex catalog pages stay in tab memory only until normalization.
@@ -49,6 +49,7 @@ The companion binds only to loopback and requires the ephemeral pairing token. I
 - **Invalid or rejected capture:** reload Collectr and start a fresh capture. CardRelay deliberately fails closed rather than guessing through a changed schema.
 - **Dex capture not ready:** complete the Collection step first, then keep one Search tab open until all catalog pages are captured.
 - **Dex normalization incomplete:** pagination succeeded, but one or more finish labels are not mapped. The snapshot remains read-only and incomplete; report the non-sensitive label diagnostics rather than guessing.
+- **Capture Dex again with the updated extension:** an older saved snapshot does not contain the verified write metadata required for syncing. Reload the unpacked extension, refresh Dex, and save a fresh Collection + Search capture once.
 - **Mapping unchanged / stale:** the source capture, Dex capture, or prior mapping changed after the popup loaded. Select **Review** and review the current candidate again.
 
 ## Current limits

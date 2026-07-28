@@ -257,13 +257,6 @@
           requestId,
           batch: message.batch
         }, location.origin);
-        setTimeout(() => {
-          const settle = safeWriteRequests.get(requestId);
-          if (settle) {
-            safeWriteRequests.delete(requestId);
-            settle([]);
-          }
-        }, 30000);
       }).then(results => sendResponse({ ok: results.length > 0, results }));
       return true;
     }

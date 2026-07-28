@@ -8,6 +8,8 @@
   const paginationDelayMilliseconds = 200;
   const catalogRequestTimeoutMilliseconds = 15000;
   const catalogDiscoveryTimeoutMilliseconds = 10000;
+  const safeWriteRequestTimeoutMilliseconds = 30000;
+  const maximumSafeWriteOperations = 2000;
   const safeRouteSegments = new Set([
     "api", "v1", "v2", "card", "cards", "collection", "collections",
     "portfolio", "quantity", "quantities", "user", "users", "me"
@@ -449,6 +451,23 @@
     return status === 429 || status >= 500;
   }
 
+  async function fetchSafeWrite(url, options) {
+    const controller = new AbortController();
+    let timeout = null;
+    try {
+      return await Promise.race([
+        Reflect.apply(originalFetch, window, [url, { ...options, signal: controller.signal }]),
+        new Promise((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            controller.abort();
+            reject(new Error("Dex write request timed out"));
+          }, safeWriteRequestTimeoutMilliseconds);
+        })
+      ]);
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+    }
+  }
   async function executeSafeWrite(command) {
     if (!validSafeWriteCommand(command)) {
       return { operation_id: command?.operation_id || "invalid", succeeded: false,
@@ -457,13 +476,13 @@
     const maximumAttempts = command.method === "PATCH" ? 3 : 1;
     for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
       try {
-        const response = await Reflect.apply(originalFetch, window, [`${command.origin}${command.path}`, {
+        const response = await fetchSafeWrite(`${command.origin}${command.path}`, {
           method: command.method,
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(command.body),
           cache: "no-store"
-        }]);
+        });
         if (response.ok) {
           return { operation_id: command.operation_id, succeeded: true, outcome: "succeeded",
             status: response.status, attempts: attempt };
@@ -491,7 +510,8 @@
   async function executeSafeWriteBatch(batch) {
     const supportedContract = ["dex-safe-write-batch-v1", "dex-removal-batch-v1"];
     if (!batch || !supportedContract.includes(batch.contract_version) ||
-      !Array.isArray(batch.commands) || batch.commands.length === 0 || batch.commands.length > 50) {
+      !Array.isArray(batch.commands) || batch.commands.length === 0 ||
+      batch.commands.length > maximumSafeWriteOperations) {
       return [];
     }
     const results = [];
