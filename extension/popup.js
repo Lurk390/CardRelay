@@ -102,6 +102,12 @@ function displayDexStatus(status) {
   catalogButton.textContent = status.catalogComplete ? "Recapture catalog" : "Capture catalog";
   if (ready) {
     statusElement.textContent = "Dex is ready. Save this capture to review your sync.";
+  } else if (status.catalogError === "catalog_request_not_observed") {
+    statusElement.textContent = "Dex Search did not load the catalog. Refresh the Search page, then retry.";
+  } else if (status.catalogError === "catalog_request_timeout") {
+    statusElement.textContent = "Dex stopped responding while loading the catalog. Retry the capture.";
+  } else if (status.catalogError) {
+    statusElement.textContent = "Dex could not finish loading the catalog. Refresh Search, then retry.";
   } else if (status.captureRunning || status.activeTarget) {
     statusElement.textContent = "Capturing Dex… Keep this tab open until it finishes.";
   } else if (status.collectionComplete) {

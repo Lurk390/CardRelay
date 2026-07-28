@@ -17,7 +17,7 @@ function responseFor(payload) {
   };
 }
 
-function runObserver(payload) {
+function runObserver(payload, options = {}) {
   const listeners = new Map();
   const messages = [];
   const fetchCalls = [];
@@ -58,6 +58,7 @@ function runObserver(payload) {
       if (input instanceof FakeRequest && input.bodyUsed) {
         throw new TypeError("Dex received a consumed Request body");
       }
+      if (options.fetchImpl) return options.fetchImpl(input, init, fetchCalls.length);
       return responseFor(payloads.length > 1 ? payloads.shift() : payloads[0]);
     },
     addEventListener(type, listener) {
@@ -72,14 +73,30 @@ function runObserver(payload) {
   FakeXmlHttpRequest.prototype.addEventListener = function () {};
   FakeXmlHttpRequest.prototype.send = function () {};
   const context = vm.createContext({
+    AbortController,
     JSON,
     Request: FakeRequest,
     URL,
     XMLHttpRequest: FakeXmlHttpRequest,
+    clearTimeout,
     location: { origin: "https://app.dextcg.com" },
+    setTimeout,
     window: pageWindow
   });
-  vm.runInContext(observerSource, context);
+  const source = observerSource
+    .replace(
+      "const paginationDelayMilliseconds = 200;",
+      `const paginationDelayMilliseconds = ${options.paginationDelay ?? 200};`
+    )
+    .replace(
+      "const catalogRequestTimeoutMilliseconds = 15000;",
+      `const catalogRequestTimeoutMilliseconds = ${options.requestTimeout ?? 15000};`
+    )
+    .replace(
+      "const catalogDiscoveryTimeoutMilliseconds = 10000;",
+      `const catalogDiscoveryTimeoutMilliseconds = ${options.discoveryTimeout ?? 10000};`
+    );
+  vm.runInContext(source, context);
   return { FakeRequest, fetchCalls, listeners, messages, pageWindow };
 }
 
@@ -179,6 +196,48 @@ test("Dex observer keeps separate card streams from overwriting the largest cata
   assert.equal(observed.messages[0].payload.result[0].cardId, "large-card");
 });
 
+test("Dex catalog pagination reports and stops a stalled request", async () => {
+  const firstPage = {
+    page: 1,
+    pageSize: 20,
+    result: [card],
+    totalItems: 40,
+    totalPages: 2
+  };
+  const observed = runObserver(firstPage, {
+    paginationDelay: 0,
+    requestTimeout: 10,
+    discoveryTimeout: 100,
+    fetchImpl: (_input, _init, callCount) => callCount === 1
+      ? responseFor(firstPage)
+      : new Promise(() => {})
+  });
+  arm(observed, "catalog");
+
+  await observed.pageWindow.fetch("https://clients.invalid/cards?page=1");
+  await new Promise(resolve => setTimeout(resolve, 40));
+
+  const error = observed.messages.find(message => message.type === "capture-error");
+  assert.equal(error?.target, "catalog");
+  assert.equal(error?.reason, "catalog_request_timeout");
+});
+
+test("Dex catalog capture reports when Search never loads a catalog request", async () => {
+  const observed = runObserver({}, { discoveryTimeout: 10 });
+  arm(observed, "catalog");
+
+  await new Promise(resolve => setTimeout(resolve, 30));
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(observed.messages)),
+    [{
+      channel: "card-relay.dex.v1",
+      type: "capture-error",
+      target: "catalog",
+      reason: "catalog_request_not_observed"
+    }]
+  );
+});
 test("Dex write research emits schema only after explicit arming", async () => {
   const observed = runObserver({
     updated: true,

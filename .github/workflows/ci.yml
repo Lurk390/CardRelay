@@ -23,4 +23,5 @@ jobs:
       - run: node --check extension/dex-content.js
       - run: node --test tests/js/page-observer.test.mjs
       - run: node --test tests/js/dex-page-observer.test.mjs
+      - run: node --test tests/js/dex-content.test.mjs
 

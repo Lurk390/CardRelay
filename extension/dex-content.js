@@ -12,6 +12,13 @@
     catalog: new Map()
   };
   const conflicts = { collection: false, catalog: false };
+  const captureErrorReasons = new Set([
+    "capture_failed",
+    "catalog_request_failed",
+    "catalog_request_not_observed",
+    "catalog_request_timeout"
+  ]);
+  const captureErrors = { collection: null, catalog: null };
   const writeObservations = [];
   const safeWriteRequests = new Map();
   let activeTarget = null;
@@ -20,6 +27,7 @@
     return {
       activeTarget: ["collection", "catalog"].includes(activeTarget) ? activeTarget : null,
       conflicts: { ...conflicts },
+      captureErrors: { ...captureErrors },
       collectionPages: ordered("collection"),
       // The full Dex catalog can exceed extension storage quotas. It remains
       // sanitized in this tab's memory and is never persisted by Chrome.
@@ -43,6 +51,9 @@
         if (Number.isInteger(page?.page) && page.page >= 1) pages[target].set(page.page, page);
       }
       conflicts[target] = stored.conflicts?.[target] === true;
+      captureErrors[target] = captureErrorReasons.has(stored.captureErrors?.[target])
+        ? stored.captureErrors[target]
+        : null;
     }
     activeTarget = ["collection", "catalog"].includes(stored.activeTarget)
       ? stored.activeTarget
@@ -83,6 +94,17 @@
       return;
     }
     if (!["collection", "catalog"].includes(message.target)) return;
+    if (message.type === "capture-error") {
+      captureErrors[message.target] = captureErrorReasons.has(message.reason)
+        ? message.reason
+        : "capture_failed";
+      if (activeTarget === message.target) {
+        activeTarget = null;
+        window.postMessage({ channel, type: "capture-control", target: null }, location.origin);
+      }
+      void persist();
+      return;
+    }
     if (message.type === "stream-reset") {
       pages[message.target].clear();
       conflicts[message.target] = false;
@@ -97,11 +119,12 @@
     const previous = targetPages.get(payload.page);
     if (previous && !samePayload(previous, payload)) conflicts[message.target] = true;
     targetPages.set(payload.page, payload);
-    if (message.target === "collection") {
-      if (complete("collection")) {
-        activeTarget = null;
-        window.postMessage({ channel, type: "capture-control", target: null }, location.origin);
-      }
+    captureErrors[message.target] = null;
+    if (complete(message.target) && activeTarget === message.target) {
+      activeTarget = null;
+      window.postMessage({ channel, type: "capture-control", target: null }, location.origin);
+    }
+    if (message.target === "collection" || complete("catalog")) {
       void persist();
     }
   });
@@ -133,6 +156,8 @@
       catalogComplete: complete("catalog"),
       collectionConflict: conflicts.collection,
       catalogConflict: conflicts.catalog,
+      collectionError: captureErrors.collection,
+      catalogError: captureErrors.catalog,
       writeResearchArmed: activeTarget === "write-research",
       writeObservationCount: writeObservations.length
     };
@@ -151,6 +176,7 @@
     writeObservations.length = 0;
     pages[target].clear();
     conflicts[target] = false;
+    captureErrors[target] = null;
     activeTarget = target;
     window.postMessage({ channel, type: "capture-control", target }, location.origin);
     await persist();

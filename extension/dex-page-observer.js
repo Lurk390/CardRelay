@@ -6,6 +6,8 @@
   const maximumWriteBodyBytes = 128 * 1024;
   const maximumWriteObservations = 10;
   const paginationDelayMilliseconds = 200;
+  const catalogRequestTimeoutMilliseconds = 15000;
+  const catalogDiscoveryTimeoutMilliseconds = 10000;
   const safeRouteSegments = new Set([
     "api", "v1", "v2", "card", "cards", "collection", "collections",
     "portfolio", "quantity", "quantities", "user", "users", "me"
@@ -20,6 +22,7 @@
   let catalogStreamKey = null;
   let catalogStreamSize = -1;
   let catalogPaginationRunning = false;
+  let catalogDiscoveryTimer = null;
   let writeResearchArmed = false;
   let writeObservationCount = 0;
   const xhrWriteRequests = new WeakMap();
@@ -323,6 +326,58 @@
     return new Promise(resolve => setTimeout(resolve, paginationDelayMilliseconds));
   }
 
+  function clearCatalogDiscoveryTimer() {
+    if (catalogDiscoveryTimer !== null) {
+      clearTimeout(catalogDiscoveryTimer);
+      catalogDiscoveryTimer = null;
+    }
+  }
+
+  function publishCatalogError(reason) {
+    if (captureTarget !== "catalog") return;
+    captureTarget = null;
+    clearCatalogDiscoveryTimer();
+    window.postMessage({ channel, type: "capture-error", target: "catalog", reason }, location.origin);
+  }
+
+  function armCatalogDiscoveryTimer() {
+    clearCatalogDiscoveryTimer();
+    const firstPage = cachedPages.catalog.get(1);
+    const cachedCatalogComplete = Number.isInteger(firstPage?.totalPages) &&
+      firstPage.totalPages >= 1 &&
+      cachedPages.catalog.size === firstPage.totalPages &&
+      Array.from({ length: firstPage.totalPages }, (_value, index) => index + 1)
+        .every(page => cachedPages.catalog.has(page)) &&
+      [...cachedPages.catalog.values()].every(page => page.totalPages === firstPage.totalPages);
+    if (catalogRequestTemplate || cachedCatalogComplete) return;
+    catalogDiscoveryTimer = setTimeout(() => {
+      catalogDiscoveryTimer = null;
+      if (captureTarget === "catalog" && !catalogRequestTemplate) {
+        publishCatalogError("catalog_request_not_observed");
+      }
+    }, catalogDiscoveryTimeoutMilliseconds);
+  }
+
+  async function fetchCatalogPage(request) {
+    const controller = new AbortController();
+    let timeout = null;
+    try {
+      return await Promise.race([
+        Reflect.apply(originalFetch, window, [request, { signal: controller.signal }]),
+        new Promise((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            controller.abort();
+            const error = new Error("Dex catalog request timed out");
+            error.name = "AbortError";
+            reject(error);
+          }, catalogRequestTimeoutMilliseconds);
+        })
+      ]);
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+    }
+  }
+
   async function captureRemainingCatalogPages() {
     if (catalogPaginationRunning || !catalogRequestTemplate || captureTarget !== "catalog") return;
     const firstPage = [...cachedPages.catalog.values()][0];
@@ -336,12 +391,17 @@
         const url = new URL(catalogRequestTemplate.url);
         url.searchParams.set("page", String(page));
         const request = new Request(url, catalogRequestTemplate);
-        const response = await Reflect.apply(originalFetch, window, [request]);
-        if (!response.ok) break;
+        const response = await fetchCatalogPage(request);
+        if (!response.ok) {
+          publishCatalogError("catalog_request_failed");
+          break;
+        }
         await inspectResponse(response, [request]);
       }
-    } catch {
-      // A manual browse remains available when Dex rejects automated pagination.
+    } catch (error) {
+      publishCatalogError(error?.name === "AbortError"
+        ? "catalog_request_timeout"
+        : "catalog_request_failed");
     } finally {
       catalogPaginationRunning = false;
     }
@@ -359,7 +419,10 @@
       const recognized = inspectPayload(payload, requestArgs);
       if (recognized.includes("catalog") && requestArgs) {
         rememberCatalogRequest(requestArgs, payload);
-        if (captureTarget === "catalog") void captureRemainingCatalogPages();
+        if (captureTarget === "catalog") {
+          armCatalogDiscoveryTimer();
+          void captureRemainingCatalogPages();
+        }
       }
     } catch {}
   }
@@ -450,12 +513,16 @@
     writeResearchArmed = message.target === "write-research";
     if (writeResearchArmed) writeObservationCount = 0;
     captureTarget = ["collection", "catalog"].includes(message.target) ? message.target : null;
+    if (captureTarget !== "catalog") clearCatalogDiscoveryTimer();
     if (captureTarget) {
       for (const page of [...cachedPages[captureTarget].values()]
         .sort((left, right) => left.page - right.page)) {
         publish(captureTarget, page);
       }
-      if (captureTarget === "catalog") void captureRemainingCatalogPages();
+      if (captureTarget === "catalog") {
+        armCatalogDiscoveryTimer();
+        void captureRemainingCatalogPages();
+      }
     }
   });
 
