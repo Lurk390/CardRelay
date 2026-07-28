@@ -446,7 +446,9 @@ async function submitMappingDecisions(action) {
       decisions
     });
     if (!response?.ok) {
-      reviewSummary.textContent = `Mappings unchanged: ${response?.error || "unknown error"}`;
+      reviewSummary.textContent = response?.error === "companion_update_required"
+        ? "Restart the CardRelay companion, save its new pairing token, then retry."
+        : `Mappings unchanged: ${response?.error || "unknown error"}`;
       for (const control of reviewSection.querySelectorAll("button, input")) control.disabled = false;
       updateBulkReviewControls();
       return;

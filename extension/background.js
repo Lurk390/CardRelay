@@ -78,7 +78,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         ? { ok: true, result: payload }
         : {
           ok: false,
-          error: payload.reason || payload.error || `http_${response.status}`,
+          error: response.status === 404 &&
+            (isMappingDecisions || isCollectrBackupStatus)
+            ? "companion_update_required"
+            : (payload.reason || payload.error || `http_${response.status}`),
           issues: Array.isArray(payload.issues) ? payload.issues.slice(0, 20) : []
         });
     } catch {

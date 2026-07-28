@@ -678,6 +678,8 @@ def test_extension_exposes_polished_guided_sync_controls() -> None:
     assert "card-relay-collectr-backup-status" in popup
     assert "/v1/collectr/backups/status" in background
     assert "Using saved Collectr scan" in popup
+    assert "companion_update_required" in background
+    assert "Restart the CardRelay companion" in popup
     assert "Ready to sync" in html
     assert "card-relay-safe-write-prepare" in popup
     assert "card-relay-dex-safe-write-execute" in popup
