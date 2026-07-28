@@ -22,8 +22,12 @@ from card_relay.destinations.dex.normalizer import (
     normalize_dex_catalog,
     normalize_dex_collection,
 )
-from card_relay.domain.enums import MatchStatus, OperationType
-from card_relay.domain.models import CanonicalCardIdentity, DestinationReadSnapshot
+from card_relay.domain.enums import ExtractionCompleteness, MatchStatus, OperationType
+from card_relay.domain.models import (
+    CanonicalCardIdentity,
+    DestinationBackupSnapshot,
+    DestinationReadSnapshot,
+)
 from card_relay.domain.operations import OperationResult, SyncPlan, SyncResult
 from card_relay.domain.results import MatchResult
 from card_relay.exceptions import CardRelayError, SourceValidationError
@@ -41,6 +45,7 @@ from card_relay.sources.collectr.parsers.collectr_web_contract import (
 from card_relay.storage.database import create_database
 from card_relay.storage.repositories import (
     CatalogCacheRepository,
+    DestinationBackupRepository,
     DestinationReadRepository,
     ManagedDestinationRepository,
     MappingRepository,
@@ -67,6 +72,16 @@ class MappingDecisionUnavailable(CardRelayError):
 
 class SafeWriteUnavailable(CardRelayError):
     pass
+
+
+class RemovalTestUnavailable(CardRelayError):
+    pass
+
+
+class CompanionSafetyOptions(BaseModel):
+    allow_removal_test: bool = False
+    maximum_removal_count: int = Field(default=1, ge=1, le=10)
+    maximum_removal_percent: float = Field(default=5, gt=0, le=100)
 
 
 class ExtensionProductPage(BaseModel):
@@ -316,12 +331,17 @@ class CompanionSyncPreviewResult(BaseModel):
     change_counts: dict[str, int]
     blocked_changes: int
     truncated: bool
-    destructive_confirmation_code: None = None
+    destructive_confirmation_code: str | None = None
     destination_writes_enabled: bool
     safe_write_confirmation_code: str | None
     safe_write_operation_ids: list[str]
     safe_write_count: int
     safe_write_block_reason: str | None
+    removal_test_enabled: bool
+    removal_writes_enabled: bool
+    removal_operation_ids: list[str]
+    removal_count: int
+    removal_block_reason: str | None
     mapping_reviews: list[CompanionMappingReview]
     mapping_review_count: int
     mapping_reviews_truncated: bool
@@ -431,6 +451,40 @@ class DexSafeWriteReportResult(BaseModel):
     recapture_required: Literal[True] = True
 
 
+class DexRemovalPrepareRequest(DexSafeWritePrepareRequest):
+    pass
+
+
+class DexRemovalBatch(BaseModel):
+    contract_version: Literal["dex-removal-batch-v1"] = "dex-removal-batch-v1"
+    plan_id: int = Field(gt=0)
+    confirmation_code: str
+    backup_snapshot_id: str
+    commands: list[DexSafeWriteCommand] = Field(min_length=1, max_length=10)
+    recapture_required_after_attempt: Literal[True] = True
+
+
+class DexRemovalReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["dex-removal-report-v1"]
+    plan_id: int = Field(gt=0)
+    confirmation_code: str = Field(min_length=12, max_length=12, pattern=r"^[A-F0-9]{12}$")
+    backup_snapshot_id: str
+    results: list[DexSafeWriteExecutionResult] = Field(min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def result_ids_are_unique(self) -> "DexRemovalReportRequest":
+        ids = [result.operation_id for result in self.results]
+        if len(ids) != len(set(ids)):
+            raise ValueError("operation result IDs must be unique")
+        return self
+
+
+class DexRemovalReportResult(DexSafeWriteReportResult):
+    backup_snapshot_id: str
+
+
 def process_collectr_capture(
     payload: object,
     database_path: Path,
@@ -516,7 +570,11 @@ def process_dex_write_observations(payload: object) -> DexWriteObservationResult
     )
 
 
-def _build_dex_sync_plan(database_path: Path) -> tuple[SyncPlan, DestinationReadSnapshot]:
+def _build_dex_sync_plan(
+    database_path: Path,
+    safety_options: CompanionSafetyOptions | None = None,
+) -> tuple[SyncPlan, DestinationReadSnapshot]:
+    options = safety_options or CompanionSafetyOptions()
     engine = create_database(database_path)
     source = SourceCollectionRepository(engine).latest()
     destination = DestinationReadRepository(engine).get("dex")
@@ -524,6 +582,11 @@ def _build_dex_sync_plan(database_path: Path) -> tuple[SyncPlan, DestinationRead
         raise SyncPreviewUnavailable("collectr_capture_required")
     if destination is None:
         raise SyncPreviewUnavailable("dex_capture_required")
+    removal_test_ready = (
+        options.allow_removal_test
+        and source.completeness is ExtractionCompleteness.COMPLETE
+        and destination.complete
+    )
     mappings = MappingRepository(engine)
     matches = match_collection(
         source,
@@ -541,14 +604,24 @@ def _build_dex_sync_plan(database_path: Path) -> tuple[SyncPlan, DestinationRead
             supported_games=frozenset({"pokemon"}),
             additions=True,
             quantity_increases=True,
+            removals=options.allow_removal_test,
         ),
-        SyncPolicy(),
+        SyncPolicy(
+            allow_removals=options.allow_removal_test,
+            maximum_removal_count=options.maximum_removal_count,
+            maximum_removal_percent=options.maximum_removal_percent,
+        ),
         "dex",
-        destructive_planning_allowed=False,
+        destructive_planning_allowed=removal_test_ready,
         managed_destination_ids=ManagedDestinationRepository(engine).list_ids("dex"),
     )
     if not destination.complete:
         plan.warnings.append("Dex normalization is incomplete; destructive writes remain blocked")
+    if options.allow_removal_test:
+        plan.warnings.append(
+            "CONTROLLED REMOVAL TEST MODE: only managed removals within configured thresholds "
+            "can be prepared"
+        )
     return plan, destination
 
 
@@ -602,19 +675,88 @@ def _safe_write_preview(
     destination: DestinationReadSnapshot,
     audit: SyncAuditRepository,
 ) -> tuple[list[DexSafeWriteCommand], str | None]:
-    if len(plan.safe_write_operations) > 50:
-        return [], "safe_write_batch_limit_exceeded"
     if audit.has_write_attempt_for_state("dex", plan.destination_collection_fingerprint):
         return [], "dex_recapture_required_after_write_attempt"
+    if len(plan.safe_write_operations) > 50:
+        return [], "safe_write_batch_limit_exceeded"
     try:
         return _safe_write_commands(plan, destination), None
     except (SafeWriteUnavailable, ValidationError):
         return [], "safe_write_metadata_unavailable"
 
 
-def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
+def _removal_write_commands(
+    plan: SyncPlan,
+    destination: DestinationReadSnapshot,
+) -> list[DexSafeWriteCommand]:
+    metadata = DexWriteMetadata.model_validate(destination.metadata.get("write_metadata"))
+    commands: list[DexSafeWriteCommand] = []
+    for operation in plan.destructive_operations:
+        if operation.operation_type is not OperationType.REMOVE:
+            raise RemovalTestUnavailable("removal_test_only_supports_complete_removals")
+        destination_id = operation.destination_id
+        if destination_id is None:
+            raise RemovalTestUnavailable("removal_missing_destination_id")
+        if destination_id in metadata.ambiguous_destination_ids:
+            raise RemovalTestUnavailable("removal_ambiguous_quantity_key")
+        quantity_key = metadata.quantity_keys.get(destination_id)
+        if quantity_key is None:
+            raise RemovalTestUnavailable("removal_quantity_key_unavailable")
+        card_id, separator, _finish = destination_id.partition("::")
+        if not separator or not card_id:
+            raise RemovalTestUnavailable("removal_invalid_destination_id")
+        existing = metadata.collection_records.get(card_id)
+        if existing is None:
+            raise RemovalTestUnavailable("removal_collection_record_unavailable")
+        quantities = dict(existing.quantities)
+        if quantity_key not in quantities:
+            raise RemovalTestUnavailable("removal_quantity_key_not_in_collection")
+        quantities[quantity_key] = 0
+        commands.append(
+            DexSafeWriteCommand(
+                operation_id=operation.operation_id,
+                method="PATCH",
+                path=f"/api/user/cards/{existing.record_id}",
+                body=DexSafeWriteBody(cardId=card_id, quantities=quantities),
+            )
+        )
+    return commands
+
+
+def _removal_preview(
+    plan: SyncPlan,
+    destination: DestinationReadSnapshot,
+    audit: SyncAuditRepository,
+    safety_options: CompanionSafetyOptions,
+) -> tuple[list[DexSafeWriteCommand], str | None]:
+    if not safety_options.allow_removal_test:
+        return [], "removal_test_not_enabled"
+    if audit.has_write_attempt_for_state("dex", plan.destination_collection_fingerprint):
+        return [], "dex_recapture_required_after_write_attempt"
+    removal_candidates = [
+        operation
+        for operation in plan.operations
+        if operation.operation_type is OperationType.REMOVE
+    ]
+    if not removal_candidates:
+        return [], None
+    if not plan.destructive_operations:
+        return [], "removal_not_eligible_or_threshold_blocked"
+    if len(plan.destructive_operations) > safety_options.maximum_removal_count:
+        return [], "removal_test_batch_limit_exceeded"
+    try:
+        return _removal_write_commands(plan, destination), None
+    except (RemovalTestUnavailable, ValidationError):
+        return [], "removal_metadata_unavailable"
+
+
+def process_sync_preview(
+    database_path: Path,
+    safety_options: CompanionSafetyOptions | None = None,
+) -> CompanionSyncPreviewResult:
+    options = safety_options or CompanionSafetyOptions()
     engine = create_database(database_path)
-    plan, destination = _build_dex_sync_plan(database_path)
+    plan, destination = _build_dex_sync_plan(database_path, options)
     changes = preview_changes(plan)
     maximum_changes = 2000
     counts = {kind.value: 0 for kind in OperationType}
@@ -622,10 +764,13 @@ def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
         counts[change.change] += 1
     pending_reviews = MappingReviewRepository(engine).list_pending("dex")
     maximum_reviews = 500
-    safe_commands, safe_write_block_reason = _safe_write_preview(
+    audit = SyncAuditRepository(engine)
+    safe_commands, safe_write_block_reason = _safe_write_preview(plan, destination, audit)
+    removal_commands, removal_block_reason = _removal_preview(
         plan,
         destination,
-        SyncAuditRepository(engine),
+        audit,
+        options,
     )
     return CompanionSyncPreviewResult(
         source_completeness=plan.source_completeness.value,
@@ -636,11 +781,17 @@ def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
             for change in changes
         ),
         truncated=len(changes) > maximum_changes,
+        destructive_confirmation_code=(plan.confirmation_code if removal_commands else None),
         destination_writes_enabled=bool(safe_commands),
         safe_write_confirmation_code=plan.confirmation_code if safe_commands else None,
         safe_write_operation_ids=[command.operation_id for command in safe_commands],
         safe_write_count=len(safe_commands),
         safe_write_block_reason=safe_write_block_reason,
+        removal_test_enabled=options.allow_removal_test,
+        removal_writes_enabled=bool(removal_commands),
+        removal_operation_ids=[command.operation_id for command in removal_commands],
+        removal_count=len(removal_commands),
+        removal_block_reason=removal_block_reason,
         mapping_reviews=[
             _companion_mapping_review(item) for item in pending_reviews[:maximum_reviews]
         ],
@@ -653,10 +804,11 @@ def process_sync_preview(database_path: Path) -> CompanionSyncPreviewResult:
 def process_safe_write_prepare(
     payload: object,
     database_path: Path,
+    safety_options: CompanionSafetyOptions | None = None,
 ) -> DexSafeWriteBatch:
     request = DexSafeWritePrepareRequest.model_validate(payload)
     engine = create_database(database_path)
-    plan, destination = _build_dex_sync_plan(database_path)
+    plan, destination = _build_dex_sync_plan(database_path, safety_options)
     audit = SyncAuditRepository(engine)
     commands, block_reason = _safe_write_preview(plan, destination, audit)
     if block_reason is not None or not commands:
@@ -724,14 +876,118 @@ def process_safe_write_report(
     )
 
 
+def process_removal_prepare(
+    payload: object,
+    database_path: Path,
+    safety_options: CompanionSafetyOptions | None = None,
+) -> DexRemovalBatch:
+    options = safety_options or CompanionSafetyOptions()
+    if not options.allow_removal_test:
+        raise RemovalTestUnavailable("removal_test_not_enabled")
+    request = DexRemovalPrepareRequest.model_validate(payload)
+    engine = create_database(database_path)
+    plan, destination = _build_dex_sync_plan(database_path, options)
+    audit = SyncAuditRepository(engine)
+    commands, block_reason = _removal_preview(plan, destination, audit, options)
+    if block_reason is not None or not commands:
+        raise RemovalTestUnavailable(block_reason or "removal_unavailable")
+    if request.confirmation_code != plan.confirmation_code:
+        raise RemovalTestUnavailable("removal_confirmation_mismatch")
+    command_ids = [command.operation_id for command in commands]
+    if request.operation_ids != command_ids:
+        raise RemovalTestUnavailable("removal_operations_changed")
+    backup_snapshot_id = DestinationBackupRepository(engine).add(
+        DestinationBackupSnapshot(
+            destination_name="dex",
+            plan_confirmation_code=plan.confirmation_code,
+            collection=destination.collection,
+        )
+    )
+    plan_id = audit.add_plan(plan)
+    audit.add_run(
+        plan_id,
+        SyncResult(
+            dry_run=False,
+            results=[
+                OperationResult(
+                    operation_id=command.operation_id,
+                    succeeded=False,
+                    message="removal batch prepared; execution report pending",
+                )
+                for command in commands
+            ],
+        ),
+    )
+    return DexRemovalBatch(
+        plan_id=plan_id,
+        confirmation_code=plan.confirmation_code,
+        backup_snapshot_id=backup_snapshot_id,
+        commands=commands,
+    )
+
+
+def process_removal_report(
+    payload: object,
+    database_path: Path,
+    safety_options: CompanionSafetyOptions | None = None,
+) -> DexRemovalReportResult:
+    options = safety_options or CompanionSafetyOptions()
+    if not options.allow_removal_test:
+        raise RemovalTestUnavailable("removal_test_not_enabled")
+    request = DexRemovalReportRequest.model_validate(payload)
+    engine = create_database(database_path)
+    audit = SyncAuditRepository(engine)
+    plan = audit.get_plan(request.plan_id)
+    if plan.destination != "dex" or request.confirmation_code != plan.confirmation_code:
+        raise RemovalTestUnavailable("removal_report_not_authorized")
+    if any(
+        operation.operation_type is not OperationType.REMOVE
+        for operation in plan.destructive_operations
+    ):
+        raise RemovalTestUnavailable("removal_report_contains_unsupported_operation")
+    expected_ids = [operation.operation_id for operation in plan.destructive_operations]
+    reported_ids = [item.operation_id for item in request.results]
+    if reported_ids != expected_ids:
+        raise RemovalTestUnavailable("removal_report_operations_changed")
+    backup = DestinationBackupRepository(engine).get(request.backup_snapshot_id)
+    if (
+        backup is None
+        or backup.destination_name != "dex"
+        or backup.plan_confirmation_code != plan.confirmation_code
+    ):
+        raise RemovalTestUnavailable("removal_backup_mismatch")
+    result = SyncResult(
+        dry_run=False,
+        results=[
+            OperationResult(
+                operation_id=item.operation_id,
+                succeeded=item.succeeded,
+                message=item.outcome,
+            )
+            for item in request.results
+        ],
+    )
+    audit.add_run(request.plan_id, result)
+    ManagedDestinationRepository(engine).reconcile_successful_run(plan, result)
+    succeeded = sum(item.succeeded for item in request.results)
+    return DexRemovalReportResult(
+        plan_id=request.plan_id,
+        succeeded=succeeded,
+        failed=len(request.results) - succeeded,
+        fully_succeeded=result.succeeded,
+        backup_snapshot_id=request.backup_snapshot_id,
+    )
+
+
 def process_mapping_decision(
     payload: object,
     database_path: Path,
+    safety_options: CompanionSafetyOptions | None = None,
 ) -> CompanionSyncPreviewResult:
     request = MappingDecisionRequest.model_validate(payload)
     # Rebuild first so a decision can only target a candidate offered by the latest
     # source and destination snapshots, never a stale popup or arbitrary ID.
-    process_sync_preview(database_path)
+    process_sync_preview(database_path, safety_options)
     engine = create_database(database_path)
     pending = MappingReviewRepository(engine).list_pending("dex")
     review = next(
@@ -748,7 +1004,7 @@ def process_mapping_decision(
         mappings.confirm(request.source_fingerprint, "dex", request.destination_id)
     else:
         mappings.reject(request.source_fingerprint, "dex", request.destination_id)
-    return process_sync_preview(database_path)
+    return process_sync_preview(database_path, safety_options)
 
 
 def _companion_mapping_review(item: dict[str, object]) -> CompanionMappingReview:
@@ -844,9 +1100,11 @@ class CompanionServer(ThreadingHTTPServer):
         address: tuple[str, int],
         token: str,
         database_path: Path,
+        safety_options: CompanionSafetyOptions,
     ) -> None:
         self.token = token
         self.database_path = database_path
+        self.safety_options = safety_options
         self.dex_uploads: dict[str, DexUploadState] = {}
         self.dex_upload_lock = threading.Lock()
         super().__init__(address, CompanionRequestHandler)
@@ -873,8 +1131,10 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
                     "dex-extension-v1",
                     "dex-write-observation-v1",
                     "dex-safe-write-batch-v1",
+                    "dex-removal-batch-v1",
                 ],
                 "destination_writes_enabled": True,
+                "removal_test_enabled": self.server.safety_options.allow_removal_test,
             },
         )
 
@@ -886,6 +1146,8 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             "/v1/dex/write-observations",
             "/v1/dex/safe-write-batches",
             "/v1/dex/safe-write-reports",
+            "/v1/dex/removal-batches",
+            "/v1/dex/removal-reports",
             "/v1/sync/previews",
             "/v1/mappings/decisions",
         }:
@@ -926,13 +1188,25 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
             elif self.path == "/v1/dex/write-observations":
                 result = process_dex_write_observations(payload)
             elif self.path == "/v1/dex/safe-write-batches":
-                result = process_safe_write_prepare(payload, self.server.database_path)
+                result = process_safe_write_prepare(
+                    payload, self.server.database_path, self.server.safety_options
+                )
             elif self.path == "/v1/dex/safe-write-reports":
                 result = process_safe_write_report(payload, self.server.database_path)
+            elif self.path == "/v1/dex/removal-batches":
+                result = process_removal_prepare(
+                    payload, self.server.database_path, self.server.safety_options
+                )
+            elif self.path == "/v1/dex/removal-reports":
+                result = process_removal_report(
+                    payload, self.server.database_path, self.server.safety_options
+                )
             elif self.path == "/v1/sync/previews":
-                result = process_sync_preview(self.server.database_path)
+                result = process_sync_preview(self.server.database_path, self.server.safety_options)
             elif self.path == "/v1/mappings/decisions":
-                result = process_mapping_decision(payload, self.server.database_path)
+                result = process_mapping_decision(
+                    payload, self.server.database_path, self.server.safety_options
+                )
             else:
                 result = process_collectr_capture(payload, self.server.database_path)
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -981,6 +1255,12 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
                 {"error": "safe_write_rejected", "reason": str(error)},
             )
             return
+        except RemovalTestUnavailable as error:
+            self._write_json(
+                409,
+                {"error": "removal_test_rejected", "reason": str(error)},
+            )
+            return
         except CardRelayError:
             self._write_json(422, {"error": "capture_rejected"})
             return
@@ -1016,7 +1296,9 @@ def serve_companion(
     database_path: Path,
     port: int = 8765,
     token_factory: Callable[[], str] | None = None,
+    safety_options: CompanionSafetyOptions | None = None,
 ) -> tuple[CompanionServer, str]:
     token = (token_factory or (lambda: secrets.token_urlsafe(32)))()
-    server = CompanionServer(("127.0.0.1", port), token, database_path)
+    options = safety_options or CompanionSafetyOptions()
+    server = CompanionServer(("127.0.0.1", port), token, database_path, options)
     return server, token

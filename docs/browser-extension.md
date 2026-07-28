@@ -35,4 +35,4 @@ Permissions are intentionally narrow:
 
 No broad browsing-history, debugger, cookies, downloads, or all-sites permission is requested.
 
-This is the initial manual-preview slice of Milestone 8, intentionally brought forward to unblock Milestone 2 authentication. Periodic checks, notifications, packaged distribution, secure update delivery, and destructive synchronization remain out of scope. The only Dex writes in scope are explicitly confirmed additions and quantity increases.
+This is the initial manual-preview slice of Milestone 8, intentionally brought forward to unblock Milestone 2 authentication. Periodic checks, notifications, packaged distribution, secure update delivery, and general destructive synchronization remain out of scope. Normal Dex writes are explicitly confirmed additions and quantity increases. A test-only companion flag can additionally authorize one threshold-bounded, previously managed removal candidate from complete captures; it requires a separate destructive confirmation, local recovery backup, preserved full quantity map, and immediate Dex recapture.

@@ -10,6 +10,7 @@ const observerSource = readFileSync(
 
 function responseFor(payload) {
   return {
+    ok: true,
     status: 200,
     headers: { get: name => name === "content-type" ? "application/json" : null },
     clone: () => ({ text: async () => JSON.stringify(payload) })
@@ -19,6 +20,7 @@ function responseFor(payload) {
 function runObserver(payload) {
   const listeners = new Map();
   const messages = [];
+  const fetchCalls = [];
   const payloads = Array.isArray(payload) ? [...payload] : [payload];
   class FakeRequest {
     constructor(input, init = {}) {
@@ -51,7 +53,8 @@ function runObserver(payload) {
     }
   }
   const pageWindow = {
-    fetch: async input => {
+    fetch: async (input, init) => {
+      fetchCalls.push({ input, init });
       if (input instanceof FakeRequest && input.bodyUsed) {
         throw new TypeError("Dex received a consumed Request body");
       }
@@ -77,7 +80,7 @@ function runObserver(payload) {
     window: pageWindow
   });
   vm.runInContext(observerSource, context);
-  return { FakeRequest, listeners, messages, pageWindow };
+  return { FakeRequest, fetchCalls, listeners, messages, pageWindow };
 }
 
 function arm(observed, target) {
@@ -277,4 +280,44 @@ test("Dex write research never consumes Dex's original Request body", async () =
 
   assert.equal(observed.messages.length, 1);
   assert.equal(observed.messages[0].payload.method, "PATCH");
+});
+
+
+test("Dex executor applies a controlled removal as a full quantity-map PATCH", async () => {
+  const observed = runObserver({ updated: true });
+  observed.listeners.get("message")({
+    source: observed.pageWindow,
+    origin: "https://app.dextcg.com",
+    data: {
+      channel: "card-relay.dex.v1",
+      type: "safe-write-execute",
+      requestId: "controlled-removal-1",
+      batch: {
+        contract_version: "dex-removal-batch-v1",
+        commands: [{
+          operation_id: "remove-managed-holo",
+          method: "PATCH",
+          origin: "https://clients.dextcg.com",
+          path: "/api/user/cards/managed-record-1",
+          body: {
+            cardId: "managed-card-1",
+            quantities: { holo: 0, reverseHolo: 3 }
+          }
+        }]
+      }
+    }
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const result = observed.messages.find(message => message.type === "safe-write-result");
+  assert.ok(result);
+  assert.equal(result.requestId, "controlled-removal-1");
+  assert.equal(result.results[0].succeeded, true);
+  const call = observed.fetchCalls.at(-1);
+  assert.equal(call.input, "https://clients.dextcg.com/api/user/cards/managed-record-1");
+  assert.equal(call.init.method, "PATCH");
+  assert.deepEqual(JSON.parse(call.init.body), {
+    cardId: "managed-card-1",
+    quantities: { holo: 0, reverseHolo: 3 }
+  });
 });

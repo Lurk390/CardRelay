@@ -6,13 +6,13 @@ CardRelay is an early open-source trading-card collection synchronization engine
 
 ## Current status
 
-Milestones 1 through 4 are implemented. The browser source provides a visible persistent Collectr session, verified portfolio discovery, structured response capture, infinite scrolling, embedded-data and DOM fallbacks, completeness diagnostics, sanitized fixtures, CSV equivalence tests, and browser snapshots. Destination catalogs are canonically normalized and cached; constrained probable scoring, ambiguity review, match explanations, confirmed mappings, and multiple rejected candidates persist in SQLite. The extension captures Dex's catalog and current collection into a validated local snapshot for comparison, then supports explicitly confirmed safe additions and quantity increases only.
+Milestones 1 through 4 are implemented. The browser source provides a visible persistent Collectr session, verified portfolio discovery, structured response capture, infinite scrolling, embedded-data and DOM fallbacks, completeness diagnostics, sanitized fixtures, CSV equivalence tests, and browser snapshots. Destination catalogs are canonically normalized and cached; constrained probable scoring, ambiguity review, match explanations, confirmed mappings, and multiple rejected candidates persist in SQLite. The extension captures Dex's catalog and current collection into a validated local snapshot for comparison, then supports explicitly confirmed safe additions and quantity increases, plus an opt-in single-managed-card removal test.
 
-The approved Milestone 5–6 safety foundation is in progress: CLI plans include a card-level visual diff, state-bound destructive confirmation code, stale-preview detection, persistent managed destination scope, and automatic pre-destructive recovery snapshots. The extension displays the same Collectr-to-Dex diff and can apply the separately verified Dex add/increase operations with an explicit, state-bound confirmation code. Decreases and removals remain disabled.
+The approved Milestone 5–6 safety foundation is in progress: CLI plans include a card-level visual diff, state-bound destructive confirmation code, stale-preview detection, persistent managed destination scope, and automatic pre-destructive recovery snapshots. The extension displays the same Collectr-to-Dex diff and can apply the separately verified Dex add/increase operations with an explicit, state-bound confirmation code. Removals are disabled by default; an explicitly enabled, single-managed-card test mode is available to validate Dex behavior without promoting general destructive synchronization.
 
 Safety defaults matter: every sync is a dry run, writes require explicit application action, ambiguous records are never applied, and decreases/removals remain blocked unless separately enabled with thresholds. Incomplete sources cannot authorize destructive operations.
 
-An ongoing browser observation may contain only part of a portfolio. CardRelay may plan safe additions or quantity increases for cards actually observed, but absence from a partial observation never means zero and cannot authorize a decrease or removal. Browser snapshots are not considered safe for destructive reconciliation even when their own completeness checks pass. Reliability criteria must be approved and demonstrated separately before that policy can change.
+An ongoing browser observation may contain only part of a portfolio. CardRelay may plan safe additions or quantity increases for cards actually observed, but absence from a partial observation never means zero and cannot authorize a decrease or removal. Browser snapshots are not considered generally safe for destructive reconciliation even when their own completeness checks pass. Reliability criteria must be approved and demonstrated separately before that policy can change. The controlled removal test described below is a bounded exception for one previously managed disposable card; it does not enable bulk reconciliation or quantity decreases.
 
 ## Requirements
 
@@ -38,7 +38,7 @@ uv run playwright install chromium
 
 ## Recommended browser-extension workflow
 
-The extension is the recommended ongoing import path for free and Pro Collectr users. It runs inside the normal Chrome tab where the user is already authenticated, avoiding automated Google sign-in. It captures a manual preview and can apply explicitly confirmed safe Dex changes; it cannot reduce quantities, remove cards, or write to another destination.
+The extension is the recommended ongoing import path for free and Pro Collectr users. It runs inside the normal Chrome tab where the user is already authenticated, avoiding automated Google sign-in. It captures a manual preview and can apply explicitly confirmed safe Dex changes. It cannot reduce quantities, remove unmanaged cards, perform general destructive reconciliation, or write to another destination; the opt-in test mode can zero one managed disposable-card finish.
 
 ### 1. Start the local companion
 
@@ -48,7 +48,7 @@ Keep this command running in a terminal at the repository root:
 uv run card-relay extension serve
 ```
 
-The command binds to `127.0.0.1:8765`, prints a new pairing token, and reports that destination writes are disabled. The token is intentionally ephemeral: copy it for the current run and never post it in an issue, log, or screenshot. Use a different port when needed:
+The command binds to `127.0.0.1:8765`, prints a new pairing token, enables preview-confirmed additions and increases, and reports that Dex removals are disabled. The token is intentionally ephemeral: copy it for the current run and never post it in an issue, log, or screenshot. Use a different port when needed:
 
 ```bash
 uv run card-relay extension serve --port 8877
@@ -113,6 +113,18 @@ To validate browser repeatability, open a Collectr portfolio in the extension an
 The match queue displays 50 records at a time and refreshes after every decision; summary counts cover the complete queue. Confirmations and rejections survive browser and companion restarts, but stale decisions and destination IDs not offered by the current matcher are rejected. The catalog remains only in the active Dex tab until submission; collection pages use Chrome session storage only so they survive the Collection-to-Search navigation. Missing or unknown finish labels are reported and mark normalization incomplete.
 
 When the preview offers **Apply safe Dex changes**, verify the highlighted diff, type its displayed 12-character confirmation code, and apply the batch from an open Dex tab. CardRelay can only create cards or raise quantities. It uses the verified `clients.dextcg.com` collection routes, preserves every existing Dex quantity key on updates, retries only idempotent `PATCH` requests, and records each attempt locally. After any attempt—including a partial or uncertain failure—capture Dex again before preparing another batch. This prevents a stale preview from replaying an addition.
+
+### Controlled live addition/removal test
+
+Use a disposable card and first sync it through CardRelay so its Dex printing/finish becomes managed. Recapture Dex and verify the addition. Then remove that same printing/finish from Collectr, create a new complete Collectr capture, and start the companion in controlled removal mode:
+
+```powershell
+uv run card-relay extension serve --enable-removal-test --maximum-removal-count 1 --maximum-removal-percent 100
+```
+
+Build the diff again. The red removal must identify only the disposable managed printing. Type the separate destructive confirmation code under **Controlled Dex removal test**, keep Dex open, and select **Remove managed card from Dex**. Before execution, CardRelay stores the complete normalized Dex collection as a local recovery backup. The test sends the verified absolute `PATCH /api/user/cards/{collectionRecordId}` contract with only that managed finish set to zero and preserves every other raw quantity key. Capture Dex again immediately to verify the result; CardRelay blocks another write attempt against the old snapshot.
+
+This mode does not enable decreases, unmanaged deletions, batches above the configured thresholds, incomplete Collectr/Dex captures, or general source-authoritative destructive sync. A zero quantity is the live behavior under test, so use a card you are willing to restore manually until recapture confirms Dex accepted it.
 
 The popup also includes an explicitly armed **Dex write-contract research** mode for development. After arming it, the user manually makes one small, reversible Dex collection change and then validates the observation. CardRelay captures only the HTTP method, a route template with dynamic segments removed, query-key names, bounded JSON type/property shapes, and response status. Scalar values, full URLs, headers, cookies, tokens, identifiers, and card data are discarded in the page; the request is never replayed and destination writes remain disabled.
 

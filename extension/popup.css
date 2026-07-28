@@ -33,7 +33,7 @@ h2 {
   font-size: 15px;
 }
 
-p, #status, #diff-summary, #review-summary, #write-research-status, #safe-write-status, #reliability-status {
+p, #status, #diff-summary, #review-summary, #write-research-status, #safe-write-status, #removal-status, #reliability-status {
   color: #b7c2c6;
   font-size: 13px;
 }
@@ -46,7 +46,11 @@ p, #status, #diff-summary, #review-summary, #write-research-status, #safe-write-
   border-color: #2f8f7d;
 }
 
-#safe-write-status {
+#removal-write {
+  border-color: #b94a4a;
+}
+
+#safe-write-status, #removal-status {
   white-space: pre-line;
 }
 
@@ -210,6 +214,12 @@ button.secondary {
   border: 1px solid #354249;
   background: #20282c;
   color: #e6ecee;
+}
+
+button.destructive-action {
+  border: 1px solid #ff6b6b;
+  background: #8f2f2f;
+  color: #fff;
 }
 
 button:disabled {

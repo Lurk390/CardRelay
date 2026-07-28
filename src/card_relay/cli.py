@@ -26,7 +26,7 @@ from card_relay.domain.models import (
 from card_relay.domain.operations import SyncPlan, destination_collection_fingerprint
 from card_relay.domain.results import MatchResult
 from card_relay.exceptions import CardRelayError
-from card_relay.extension.companion import serve_companion
+from card_relay.extension.companion import CompanionSafetyOptions, serve_companion
 from card_relay.matching import match_collection
 from card_relay.paths import config_path, data_directory
 from card_relay.sources.base import CollectionSource
@@ -316,10 +316,37 @@ def collectr_inspect(
 @extension_app.command("serve")
 def extension_serve(
     port: Annotated[int, typer.Option("--port", min=1024, max=65535)] = 8765,
+    enable_removal_test: Annotated[
+        bool,
+        typer.Option(
+            "--enable-removal-test",
+            help="Enable separately confirmed, managed-card removal testing.",
+        ),
+    ] = False,
+    maximum_removal_count: Annotated[
+        int, typer.Option("--maximum-removal-count", min=1, max=10)
+    ] = 1,
+    maximum_removal_percent: Annotated[
+        float, typer.Option("--maximum-removal-percent", min=0.1, max=100)
+    ] = 5,
 ) -> None:
-    server, token = serve_companion(data_directory() / "card-relay.db", port)
+    safety_options = CompanionSafetyOptions(
+        allow_removal_test=enable_removal_test,
+        maximum_removal_count=maximum_removal_count,
+        maximum_removal_percent=maximum_removal_percent,
+    )
+    server, token = serve_companion(
+        data_directory() / "card-relay.db", port, safety_options=safety_options
+    )
     typer.echo(f"CardRelay extension companion listening on http://127.0.0.1:{port}")
-    typer.echo("Destination writes: disabled")
+    typer.echo("Dex additions and quantity increases: enabled with preview confirmation")
+    if enable_removal_test:
+        typer.echo(
+            "WARNING: controlled removal test mode enabled "
+            f"(maximum {maximum_removal_count}, {maximum_removal_percent:g}%)"
+        )
+    else:
+        typer.echo("Dex removals: disabled")
     typer.echo(f"Pairing token: {token}")
     typer.echo("Keep this terminal open. Press Ctrl+C to stop the companion.")
     try:

@@ -377,6 +377,25 @@ class DestinationBackupRepository:
             session.commit()
         return snapshot.backup_id
 
+    def get(self, backup_id: str) -> DestinationBackupSnapshot | None:
+        with Session(self.engine) as session:
+            row = session.get(DestinationBackupSnapshotRow, backup_id)
+            if row is None:
+                return None
+            captured_at = row.captured_at
+            if captured_at.tzinfo is None:
+                captured_at = captured_at.replace(tzinfo=UTC)
+            return DestinationBackupSnapshot(
+                backup_id=row.backup_id,
+                destination_name=row.destination_name,
+                captured_at=captured_at,
+                plan_confirmation_code=row.plan_confirmation_code,
+                collection=[
+                    DestinationCollectionEntry.model_validate(item)
+                    for item in json.loads(row.collection_payload)
+                ],
+            )
+
     def latest(self, destination: str) -> DestinationBackupSnapshot | None:
         with Session(self.engine) as session:
             row = session.scalar(

@@ -19,6 +19,10 @@ const safeWriteSection = document.querySelector("#safe-write");
 const safeWriteConfirmation = document.querySelector("#safe-write-confirmation");
 const applySafeWriteButton = document.querySelector("#apply-safe-write");
 const safeWriteStatus = document.querySelector("#safe-write-status");
+const removalSection = document.querySelector("#removal-write");
+const removalConfirmation = document.querySelector("#removal-confirmation");
+const applyRemovalButton = document.querySelector("#apply-removal");
+const removalStatus = document.querySelector("#removal-status");
 const reliabilitySection = document.querySelector("#reliability-evidence");
 const startReliabilityButton = document.querySelector("#start-reliability");
 const copyReliabilityButton = document.querySelector("#copy-reliability");
@@ -28,6 +32,7 @@ const developerTools = document.querySelector("#developer-tools");
 const captureIssues = document.querySelector("#capture-issues");
 const captureIssuesList = document.querySelector("#capture-issues-list");
 let latestSafeWritePreview = null;
+let latestRemovalPreview = null;
 let reliabilitySeries = null;
 let developerToolsEnabled = false;
 
@@ -357,7 +362,12 @@ function displaySyncPreview(result) {
       : "All changes are displayed.",
     result.destination_writes_enabled
       ? "Safe Dex writes are ready for explicit confirmation below."
-      : "Safe Dex writes are unavailable for this preview."
+      : "Safe Dex writes are unavailable for this preview.",
+    result.removal_writes_enabled
+      ? "A controlled managed-card removal is ready for separate destructive confirmation."
+      : (result.removal_test_enabled
+        ? "Controlled removal test mode is enabled, but no eligible removal is ready."
+        : "Dex removals are disabled.")
   ].join("\n");
   diffList.replaceChildren();
   for (const change of visibleChanges.slice(0, 250)) {
@@ -386,6 +396,18 @@ function displaySyncPreview(result) {
     : (result.safe_write_block_reason === "dex_recapture_required_after_write_attempt"
       ? "A Dex write was attempted from this snapshot. Capture Dex again before another attempt."
       : "No safe Dex writes are available from this preview.");
+  latestRemovalPreview = result.removal_writes_enabled ? {
+    confirmationCode: result.destructive_confirmation_code,
+    operationIds: result.removal_operation_ids || []
+  } : null;
+  removalSection.hidden = !latestRemovalPreview;
+  removalConfirmation.value = "";
+  applyRemovalButton.disabled = true;
+  removalStatus.textContent = latestRemovalPreview
+    ? `${result.removal_count} managed removal${result.removal_count === 1 ? "" : "s"} ready. Type ${result.destructive_confirmation_code} to enable the destructive test.`
+    : (result.removal_block_reason === "dex_recapture_required_after_write_attempt"
+      ? "A Dex write was attempted from this snapshot. Capture Dex again before another attempt."
+      : "No controlled Dex removal is available from this preview.");
   displayMappingReviews(result);
 }
 
@@ -432,6 +454,61 @@ applySafeWriteButton.addEventListener("click", async () => {
     diffSummary.textContent = "Dex write attempt recorded. Capture Dex again before building the next diff.";
   } catch (error) {
     safeWriteStatus.textContent = `Write attempt was not completed: ${error.message}. Capture Dex again before retrying.`;
+  }
+});
+
+removalConfirmation.addEventListener("input", () => {
+  const typed = removalConfirmation.value.trim().toUpperCase();
+  applyRemovalButton.disabled = !latestRemovalPreview ||
+    typed !== latestRemovalPreview.confirmationCode;
+});
+
+applyRemovalButton.addEventListener("click", async () => {
+  if (!latestRemovalPreview) return;
+  applyRemovalButton.disabled = true;
+  removalStatus.textContent = "Creating a recovery backup and preparing the removal test…";
+  try {
+    const prepared = await chrome.runtime.sendMessage({
+      type: "card-relay-removal-prepare",
+      payload: {
+        confirmation_code: latestRemovalPreview.confirmationCode,
+        operation_ids: latestRemovalPreview.operationIds
+      }
+    });
+    if (!prepared?.ok) throw new Error(prepared?.error || "removal_prepare_failed");
+    const { tab, service } = await activeSupportedTab();
+    if (service !== "dex") throw new Error("Open Dex before applying the confirmed removal.");
+    removalStatus.textContent = "Applying the confirmed managed-card removal…";
+    const execution = await sendToContentScript(tab, service, {
+      type: "card-relay-dex-safe-write-execute",
+      batch: prepared.result
+    });
+    if (!execution?.ok) throw new Error("Dex did not return a complete removal report.");
+    const reported = await chrome.runtime.sendMessage({
+      type: "card-relay-removal-report",
+      payload: {
+        contract_version: "dex-removal-report-v1",
+        plan_id: prepared.result.plan_id,
+        confirmation_code: prepared.result.confirmation_code,
+        backup_snapshot_id: prepared.result.backup_snapshot_id,
+        results: execution.results
+      }
+    });
+    if (!reported?.ok) throw new Error(reported?.error || "removal_report_failed");
+    const summary = reported.result;
+    latestRemovalPreview = null;
+    removalSection.hidden = true;
+    removalStatus.textContent = [
+      `${summary.succeeded} succeeded, ${summary.failed} failed.`,
+      `Recovery backup: ${summary.backup_snapshot_id}.`,
+      "Capture Dex again now to verify the result before any further sync."
+    ].join(" ");
+    diffSummary.textContent = "Dex removal attempt recorded. Capture Dex again to verify it.";
+  } catch (error) {
+    removalStatus.textContent = [
+      `Removal attempt was not completed: ${error.message}.`,
+      "Capture Dex again before retrying; a prepared attempt may already have reached Dex."
+    ].join(" ");
   }
 });
 
@@ -576,7 +653,7 @@ sendButton.addEventListener("click", async () => {
         `Unsupported labels: ${(result.unsupported_catalog_variants?.length || 0) +
           (result.unsupported_collection_quantities?.length || 0)}`,
         result.normalization_complete
-          ? "Read-only snapshot stored. Destination writes remain disabled."
+          ? "Read-only snapshot stored. Build and confirm a diff before any write."
           : "Incomplete read-only snapshot stored; review diagnostics before comparison."
       ].join("\n");
       return;
@@ -594,7 +671,7 @@ sendButton.addEventListener("click", async () => {
       `Invalid/lossy rows: ${result.invalid_record_count}`,
       ...invalidReasons,
       `Skipped non-cards: ${result.skipped_non_card_count}`,
-      "Destination writes remain disabled."
+      "Snapshot stored. Build and confirm a diff before any write."
     ].join("\n");
   } catch (error) {
     statusElement.textContent = error.message;

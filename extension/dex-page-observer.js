@@ -426,7 +426,8 @@
   }
 
   async function executeSafeWriteBatch(batch) {
-    if (!batch || batch.contract_version !== "dex-safe-write-batch-v1" ||
+    const supportedContract = ["dex-safe-write-batch-v1", "dex-removal-batch-v1"];
+    if (!batch || !supportedContract.includes(batch.contract_version) ||
       !Array.isArray(batch.commands) || batch.commands.length === 0 || batch.commands.length > 50) {
       return [];
     }

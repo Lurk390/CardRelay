@@ -1,6 +1,6 @@
 # CardRelay browser bridge
 
-This unpacked Manifest V3 extension captures Collectr source data and Dex destination data from the user's normal authenticated Chrome tabs. It sends sanitized captures only to CardRelay's loopback companion. It does not read passwords, cookies, authorization headers, or unrelated pages. After an explicit preview confirmation it can make only verified Dex additions and quantity increases.
+This unpacked Manifest V3 extension captures Collectr source data and Dex destination data from the user's normal authenticated Chrome tabs. It sends sanitized captures only to CardRelay's loopback companion. It does not read passwords, cookies, authorization headers, or unrelated pages. After an explicit preview confirmation it can make verified Dex additions and quantity increases. A separately enabled controlled test can set one previously managed disposable card finish to zero so the removal behavior can be validated safely.
 
 ## Load and run locally
 
@@ -29,7 +29,19 @@ Dex catalog pages stay only in the current tab's memory. Sanitized collection pa
 
 After storing both a Collectr capture and a Dex capture, select **Build visual diff**. The popup groups additions and increases separately from decreases and removals, shows Dex and Collectr quantities for each card, and highlights unresolved or unmanaged records. The companion returns at most 2,000 changes and the popup renders at most 250 at once; summary counts cover the full plan and truncation is explicit.
 
-If every safe change has a verified quantity key and the diff is not stale, the popup shows **Apply safe Dex changes**. Verify the cards and quantities, type the displayed 12-character confirmation code, and apply from an open Dex tab. CardRelay sends additions with `POST https://clients.dextcg.com/api/user/cards`; it updates existing records with an absolute full quantity map using `PATCH https://clients.dextcg.com/api/user/cards/{collectionRecordId}`. PATCH may retry transient failures; POST never retries automatically because a lost response could make the result uncertain. Every attempt requires a new Dex capture before another batch can be prepared. Decreases and removals remain unavailable.
+If every safe change has a verified quantity key and the diff is not stale, the popup shows **Apply safe Dex changes**. Verify the cards and quantities, type the displayed 12-character confirmation code, and apply from an open Dex tab. CardRelay sends additions with `POST https://clients.dextcg.com/api/user/cards`; it updates existing records with an absolute full quantity map using `PATCH https://clients.dextcg.com/api/user/cards/{collectionRecordId}`. PATCH may retry transient failures; POST never retries automatically because a lost response could make the result uncertain. Every attempt requires a new Dex capture before another batch can be prepared. Quantity decreases and removals remain unavailable by default.
+
+## Controlled removal test
+
+Use a disposable printing/finish. First add or increase it through CardRelay and recapture Dex successfully; that successful run places only the synchronized destination ID in CardRelay's managed scope. Remove the same printing/finish from Collectr, complete a fresh Collectr capture, and restart the companion with:
+
+```powershell
+.\.venv\Scripts\card-relay.exe extension serve --enable-removal-test --maximum-removal-count 1 --maximum-removal-percent 100
+```
+
+Build the visual diff. Confirm that the only executable red removal is the disposable managed card. Type the separate 12-character destructive code and select **Remove managed card from Dex**. CardRelay writes a recovery backup before preparing the operation, preserves every other quantity key on the Dex record, and sets only the managed finish quantity to zero through the verified absolute PATCH route. Recapture Dex immediately; no further batch can be prepared against the old destination snapshot.
+
+This is contract-validation mode, not production destructive reconciliation. It rejects incomplete captures, unmanaged destination-only records, quantity decreases, stale snapshots, and batches outside the configured count or percentage limits. Restore the test card manually if the live Dex behavior differs from the captured contract.
 
 Probable and ambiguous Pokémon matches appear under **Match review**. Compare the card name, set, collector number, finish, score, and highlighted identity differences. Select the intended Dex candidate and choose **Confirm match**, or choose **Reject candidate** to prevent that pairing. The popup renders 50 pending records at a time and refreshes after each decision. Decisions are stored in CardRelay's local SQLite database, not extension storage, and therefore survive browser or companion restarts. Before saving, the companion reruns matching against the latest source and Dex snapshots and accepts only a candidate offered by that current result; a stale popup must rebuild the diff.
 
@@ -79,8 +91,8 @@ The comparison is only one promotion gate. For two Pro portfolios, also produce 
 - Capture and preview are manual. Periodic checks and notifications are not implemented.
 - The reliability series automates local repeatability comparison; it does not replace the required multi-portfolio, CSV-equivalence, Dex-contract, or human operational review gates.
 - A complete capture requires contiguous 30-record pages, the empty terminal page, exact/unstacked records, recognized condition and grading metadata, and a visible-total match.
-- Browser snapshots can never authorize decreases or removals at this stage.
+- Browser snapshots cannot authorize general decreases or removals at this stage. The explicit companion removal-test flag permits only a complete-capture, threshold-bounded removal of a previously managed disposable card.
 - Mapping confirmations only resolve identity; they do not approve a write or destructive operation.
 - Write-contract research is schema-only, in-memory, explicitly armed, and cannot replay a request.
-- The visual diff can apply only additions and quantity increases after the displayed confirmation code is typed.
-- The popup cannot decrease quantities, remove cards, or write to any destination other than Dex.
+- The visual diff applies additions and quantity increases after the displayed safe confirmation code is typed. Controlled removal testing uses a separate destructive code and section.
+- The popup cannot decrease quantities, remove unmanaged cards, exceed configured removal-test thresholds, or write to any destination other than Dex.

@@ -46,11 +46,19 @@
       </section>
       <section id="safe-write" hidden>
         <h2>Apply safe Dex changes</h2>
-        <p>Only additions and quantity increases shown in this preview can be applied. Decreases and removals remain blocked.</p>
+        <p>This section applies only additions and quantity increases shown in the preview. Controlled removal testing, when enabled by the companion, uses the separate section below.</p>
         <label for="safe-write-confirmation">Confirmation code</label>
         <input id="safe-write-confirmation" autocomplete="off" spellcheck="false" maxlength="12">
         <button id="apply-safe-write" disabled>Apply additions and increases</button>
         <div id="safe-write-status" aria-live="polite"></div>
+      </section>
+      <section id="removal-write" hidden>
+        <h2>Controlled Dex removal test</h2>
+        <p>This can set only a CardRelay-managed card quantity to zero, within the companion's configured removal thresholds. Review the red diff entry and use a disposable test card first.</p>
+        <label for="removal-confirmation">Destructive confirmation code</label>
+        <input id="removal-confirmation" autocomplete="off" spellcheck="false" maxlength="12">
+        <button id="apply-removal" class="destructive-action" disabled>Remove managed card from Dex</button>
+        <div id="removal-status" aria-live="polite"></div>
       </section>
       <section>
         <h2>Match review</h2>

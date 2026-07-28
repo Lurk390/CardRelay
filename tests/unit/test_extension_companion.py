@@ -8,16 +8,22 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from card_relay.domain.enums import ExtractionCompleteness, IngestionMethod
+from card_relay.domain.models import CanonicalCollection, SourceSnapshot, collection_fingerprint
 from card_relay.extension.companion import (
     CollectrExtensionCapture,
+    CompanionSafetyOptions,
     DexWriteObservationCapture,
     MappingDecisionUnavailable,
+    RemovalTestUnavailable,
     SafeWriteUnavailable,
     SyncPreviewUnavailable,
     process_collectr_capture,
     process_dex_capture,
     process_dex_write_observations,
     process_mapping_decision,
+    process_removal_prepare,
+    process_removal_report,
     process_safe_write_prepare,
     process_safe_write_report,
     process_sync_preview,
@@ -25,7 +31,12 @@ from card_relay.extension.companion import (
 )
 from card_relay.storage.database import create_database
 from card_relay.storage.models import SnapshotRow
-from card_relay.storage.repositories import MappingRepository
+from card_relay.storage.repositories import (
+    DestinationBackupRepository,
+    ManagedDestinationRepository,
+    MappingRepository,
+    SourceCollectionRepository,
+)
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "collectr"
 DEX_FIXTURE = Path(__file__).parents[1] / "fixtures" / "dex" / "extension_capture.json"
@@ -452,6 +463,147 @@ def test_safe_dex_write_batch_is_confirmation_bound_and_requires_recapture(tmp_p
     assert blocked.safe_write_block_reason == "dex_recapture_required_after_write_attempt"
 
 
+def test_controlled_removal_zeroes_only_managed_finish_and_requires_recapture(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "card-relay.db"
+    process_collectr_capture(_payload(), database_path)
+    dex_capture = json.loads(DEX_FIXTURE.read_text(encoding="utf-8"))
+    quantities = dex_capture["collection_pages"][0]["result"][0]["quantities"]
+    quantities["normal"] = 3
+    process_dex_capture(dex_capture, database_path)
+    review = process_sync_preview(database_path).mapping_reviews[0]
+    safe_preview = process_mapping_decision(
+        {
+            "action": "confirm",
+            "source_fingerprint": review.source_fingerprint,
+            "destination_id": review.candidates[0].destination_id,
+        },
+        database_path,
+    )
+    safe_batch = process_safe_write_prepare(
+        {
+            "confirmation_code": safe_preview.safe_write_confirmation_code,
+            "operation_ids": safe_preview.safe_write_operation_ids,
+        },
+        database_path,
+    )
+    process_safe_write_report(
+        {
+            "contract_version": "dex-safe-write-report-v1",
+            "plan_id": safe_batch.plan_id,
+            "confirmation_code": safe_batch.confirmation_code,
+            "results": [
+                {
+                    "operation_id": safe_batch.commands[0].operation_id,
+                    "succeeded": True,
+                    "outcome": "succeeded",
+                    "status": 200,
+                    "attempts": 1,
+                }
+            ],
+        },
+        database_path,
+    )
+
+    quantities["holo"] = 2
+    process_dex_capture(dex_capture, database_path)
+    empty_collection = CanonicalCollection(entries=[], completeness=ExtractionCompleteness.COMPLETE)
+    SourceCollectionRepository(create_database(database_path)).add(
+        SourceSnapshot(
+            ingestion_method=IngestionMethod.BROWSER,
+            source_schema_fingerprint="controlled-removal-test",
+            parser_name="controlled-removal-test",
+            parser_version="1",
+            completeness=ExtractionCompleteness.COMPLETE,
+            total_unique_entries=0,
+            total_quantity=0,
+            collection_fingerprint=collection_fingerprint(empty_collection),
+            trusted_for_destructive_planning=False,
+        ),
+        empty_collection,
+    )
+
+    default_preview = process_sync_preview(database_path)
+    assert default_preview.removal_test_enabled is False
+    assert default_preview.removal_writes_enabled is False
+    assert default_preview.destructive_confirmation_code is None
+
+    options = CompanionSafetyOptions(
+        allow_removal_test=True,
+        maximum_removal_count=1,
+        maximum_removal_percent=100,
+    )
+    preview = process_sync_preview(database_path, options)
+    assert preview.removal_test_enabled is True
+    assert preview.removal_writes_enabled is True
+    assert preview.removal_count == 1
+    assert preview.destructive_confirmation_code is not None
+    with pytest.raises(RemovalTestUnavailable, match="removal_test_not_enabled"):
+        process_removal_prepare(
+            {
+                "confirmation_code": preview.destructive_confirmation_code,
+                "operation_ids": preview.removal_operation_ids,
+            },
+            database_path,
+        )
+    with pytest.raises(RemovalTestUnavailable, match="removal_confirmation_mismatch"):
+        process_removal_prepare(
+            {
+                "confirmation_code": "A" * 12,
+                "operation_ids": preview.removal_operation_ids,
+            },
+            database_path,
+            options,
+        )
+
+    batch = process_removal_prepare(
+        {
+            "confirmation_code": preview.destructive_confirmation_code,
+            "operation_ids": preview.removal_operation_ids,
+        },
+        database_path,
+        options,
+    )
+
+    assert batch.contract_version == "dex-removal-batch-v1"
+    assert batch.commands[0].method == "PATCH"
+    assert batch.commands[0].path == "/api/user/cards/fixture-collection-entry-1"
+    assert batch.commands[0].body.quantities["holo"] == 0
+    assert batch.commands[0].body.quantities["normal"] == 3
+    backup = DestinationBackupRepository(create_database(database_path)).latest("dex")
+    assert backup is not None
+    assert backup.backup_id == batch.backup_snapshot_id
+    assert any(entry.quantity == 2 for entry in backup.collection)
+
+    report = process_removal_report(
+        {
+            "contract_version": "dex-removal-report-v1",
+            "plan_id": batch.plan_id,
+            "confirmation_code": batch.confirmation_code,
+            "backup_snapshot_id": batch.backup_snapshot_id,
+            "results": [
+                {
+                    "operation_id": batch.commands[0].operation_id,
+                    "succeeded": True,
+                    "outcome": "succeeded",
+                    "status": 200,
+                    "attempts": 1,
+                }
+            ],
+        },
+        database_path,
+        options,
+    )
+
+    assert report.fully_succeeded
+    assert report.backup_snapshot_id == batch.backup_snapshot_id
+    assert ManagedDestinationRepository(create_database(database_path)).list_ids("dex") == set()
+    blocked = process_sync_preview(database_path, options)
+    assert blocked.removal_writes_enabled is False
+    assert blocked.removal_block_reason == "dex_recapture_required_after_write_attempt"
+
+
 def test_sync_preview_reports_which_local_capture_is_missing(tmp_path: Path) -> None:
     database_path = tmp_path / "card-relay.db"
 
@@ -496,6 +648,11 @@ def test_extension_exposes_visual_diff_and_safe_write_controls() -> None:
     assert "card-relay-safe-write-prepare" in popup
     assert "card-relay-dex-safe-write-execute" in popup
     assert "/v1/dex/safe-write-batches" in background
+    assert "Controlled Dex removal test" in html
+    assert "card-relay-removal-prepare" in popup
+    assert "dex-removal-report-v1" in popup
+    assert "/v1/dex/removal-batches" in background
+    assert "/v1/dex/removal-reports" in background
 
 
 def test_companion_accepts_dex_capture_in_bounded_contiguous_chunks(tmp_path: Path) -> None:

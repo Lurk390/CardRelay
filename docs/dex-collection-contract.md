@@ -35,4 +35,4 @@ The fictional integration fixture is `tests/fixtures/dex/extension_capture.json`
 - The extension is an unpacked development build.
 - Language, condition, edition, grading, and every possible finish label are not yet proven by the live sample. Unknown distinctions fail closed.
 - The destination adapter is read-only. Additions, increases, retries, confirmations, audit logs, and idempotent writes belong to Milestone 5 and require a separately verified write contract and design approval.
-- Quantity decreases and removals remain disabled regardless of capture completeness.
+- Quantity decreases and general removals remain disabled regardless of capture completeness. An explicit test-only flag can authorize one threshold-bounded, previously managed removal from complete captures to validate Dex zero-quantity behavior.

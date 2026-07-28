@@ -6,7 +6,8 @@ void chrome.storage.session.setAccessLevel({
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!["card-relay-companion-submit", "card-relay-sync-preview", "card-relay-mapping-decision",
-    "card-relay-safe-write-prepare", "card-relay-safe-write-report"]
+    "card-relay-safe-write-prepare", "card-relay-safe-write-report",
+    "card-relay-removal-prepare", "card-relay-removal-report"]
     .includes(message?.type)) {
     return false;
   }
@@ -22,6 +23,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const isMappingDecision = message.type === "card-relay-mapping-decision";
       const isSafeWritePrepare = message.type === "card-relay-safe-write-prepare";
       const isSafeWriteReport = message.type === "card-relay-safe-write-report";
+      const isRemovalPrepare = message.type === "card-relay-removal-prepare";
+      const isRemovalReport = message.type === "card-relay-removal-report";
       const isDexWriteObservation = message.capture?.contract_version ===
         "dex-write-observation-v1";
       const isDexChunk = message.capture?.contract_version === "dex-extension-chunk-v1";
@@ -32,6 +35,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       else if (isSafeWritePrepare) capturePath = "/v1/dex/safe-write-batches";
       else if (isSafeWriteReport) capturePath = "/v1/dex/safe-write-reports";
       else if (isDexWriteObservation) capturePath = "/v1/dex/write-observations";
+      else if (isRemovalPrepare) capturePath = "/v1/dex/removal-batches";
+      else if (isRemovalReport) capturePath = "/v1/dex/removal-reports";
       else if (isDexChunk) capturePath = "/v1/dex/capture-chunks";
       else if (isDex) capturePath = "/v1/dex/captures";
       const response = await fetch(`http://127.0.0.1:${port}${capturePath}`, {
@@ -42,7 +47,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         },
         body: JSON.stringify(
           isMappingDecision ? message.decision
-            : ((isSafeWritePrepare || isSafeWriteReport) ? message.payload : (message.capture || {}))
+            : ((isSafeWritePrepare || isSafeWriteReport || isRemovalPrepare || isRemovalReport)
+              ? message.payload
+              : (message.capture || {}))
         ),
         cache: "no-store"
       });
